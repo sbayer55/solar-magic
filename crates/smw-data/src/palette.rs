@@ -10,6 +10,7 @@ use core::fmt;
 use snes_rom::{Rom, RomError, SnesAddr};
 
 use crate::RomLayout;
+use crate::level::Level;
 
 /// A 15-bit SNES colour: `0bbbbbgggggrrrrr`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -244,6 +245,47 @@ pub fn build_level_palette(
     Ok(pal)
 }
 
+/// Size of a Lunar Magic custom palette block: a back area colour word
+/// followed by 256 colour words.
+pub const CUSTOM_PALETTE_LEN: usize = 0x202;
+
+/// Loads a Lunar Magic custom palette block (`docs/formats/palettes.md`).
+///
+/// Word 0 is the back area colour (CGRAM colour 0), words 1–256 are colours
+/// 0–255 in row-major order. Verified against the upload routine at
+/// `$0E:F570` on 2026-10-06.
+///
+/// # Errors
+///
+/// ROM read failures.
+pub fn load_custom_palette(rom: &Rom, block: SnesAddr) -> Result<Palette, RomError> {
+    let bytes = rom.read(block, CUSTOM_PALETTE_LEN)?;
+    let word = |i: usize| {
+        let lo = bytes.get(i.saturating_mul(2)).copied().unwrap_or(0);
+        let hi = bytes.get(i.saturating_mul(2).saturating_add(1)).copied().unwrap_or(0);
+        Bgr555::new(u16::from_le_bytes([lo, hi]))
+    };
+    let mut pal = Palette::black();
+    for index in 0..256usize {
+        pal.set(index / 16, index % 16, word(index.saturating_add(1)));
+    }
+    pal.set(0, 0, word(0));
+    Ok(pal)
+}
+
+/// The palette a level displays: its Lunar Magic custom palette if it has
+/// one, else the header-selected vanilla assembly.
+///
+/// # Errors
+///
+/// ROM read failures.
+pub fn level_palette(rom: &Rom, layout: &RomLayout, level: &Level) -> Result<Palette, RomError> {
+    level.lm.and_then(|info| info.custom_palette).map_or_else(
+        || build_level_palette(rom, layout, level.header.palette_selection()),
+        |block| load_custom_palette(rom, block),
+    )
+}
+
 /// A rectangular region of the palette filled from consecutive ROM words.
 #[derive(Clone, Copy)]
 struct Block {
@@ -293,6 +335,56 @@ mod tests {
         assert_eq!(p.get(3, 4), Some(Bgr555::BLACK));
         assert_eq!(p.get(16, 0), None);
         assert_eq!(p.row_rgba8(3)[5], [255, 255, 255, 255]);
+    }
+
+    #[test]
+    fn custom_palette_layout() {
+        // A 0x202-byte block at $10:8000 of a synthetic 1 MiB LoROM.
+        let mut image = vec![0u8; 0x10_0000];
+        // Internal header: title, LoROM, 1 MiB, consistent checksum pair.
+        image[0x7FC0..0x7FD5].copy_from_slice(b"SUPER MARIOWORLD     ");
+        image[0x7FD5..0x7FE0]
+            .copy_from_slice(&[0x20, 0x02, 0x0A, 0x01, 0x01, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x00]);
+        let block = 0x08_0000;
+        image[block..block + 2].copy_from_slice(&0x3D1Fu16.to_le_bytes());
+        for i in 0..256usize {
+            let v = u16::try_from(i).expect("fits");
+            image[block + 2 + i * 2..block + 4 + i * 2].copy_from_slice(&v.to_le_bytes());
+        }
+        let rom = snes_rom::Rom::from_bytes(image).expect("valid rom");
+        let pal =
+            super::load_custom_palette(&rom, snes_rom::SnesAddr::lit(0x10_8000)).expect("reads");
+        assert_eq!(pal.get(0, 0), Some(Bgr555::new(0x3D1F)), "back area colour wins colour 0");
+        assert_eq!(pal.get(0, 1), Some(Bgr555::new(1)));
+        assert_eq!(pal.get(1, 0), Some(Bgr555::new(16)));
+        assert_eq!(pal.get(15, 15), Some(Bgr555::new(255)));
+    }
+
+    /// Every custom palette in a Lunar Magic ROM is a RATS-tagged 0x202-byte block.
+    #[test]
+    fn lm_rom_custom_palettes() {
+        let Some(path) = std::env::var_os("LM_ROM") else {
+            eprintln!("LM_ROM not set; skipping Lunar Magic ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = crate::RomLayout::detect(&rom).expect("lunar magic");
+        let mut count = 0;
+        for id in crate::LevelId::all() {
+            let Some(block) = crate::level::LmLevelInfo::load(&rom, &layout, id)
+                .expect("reads")
+                .and_then(|i| i.custom_palette)
+            else {
+                continue;
+            };
+            let pc = rom.pc(block).expect("mapped");
+            let tag = snes_rom::rats::RatsTag::parse_at(rom.bytes(), pc - 8).expect("tagged");
+            assert_eq!(tag.data_len, super::CUSTOM_PALETTE_LEN, "level {id}");
+            let pal = super::load_custom_palette(&rom, block).expect("loads");
+            assert!(pal.get(15, 15).is_some(), "level {id}");
+            count += 1;
+        }
+        assert!(count > 0, "expected custom palettes");
     }
 
     /// Checks the structural facts of `LoadPalette` against the real ROM.

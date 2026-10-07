@@ -67,6 +67,13 @@ impl<'a> SnesBus<'a> {
         }
     }
 
+    /// Stores a 16-bit little-endian value in WRAM.
+    pub fn set_wram_u16(&mut self, addr: Addr, value: u16) {
+        let [lo, hi] = value.to_le_bytes();
+        self.set_wram(addr, lo);
+        self.set_wram(addr.wrapping_add(1), hi);
+    }
+
     /// Stores a 24-bit little-endian value in WRAM.
     pub fn set_wram_u24(&mut self, addr: Addr, value: u32) {
         let [lo, mid, hi, _] = value.to_le_bytes();

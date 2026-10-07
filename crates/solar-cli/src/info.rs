@@ -49,11 +49,43 @@ pub(crate) fn run(path: &Path) -> anyhow::Result<()> {
     }
 
     match RomLayout::detect(&rom) {
-        Ok(layout) => println!("layout:          {:?}", layout.kind),
-        Err(LayoutError::LunarMagicUnsupported { signature }) => {
-            println!("layout:          Lunar Magic ({signature}) - not supported yet");
+        Ok(layout) => {
+            println!("layout:          {}", layout.kind);
+            if layout.is_lunar_magic() {
+                print_lunar_magic_summary(&rom, &layout)?;
+            }
+        }
+        Err(LayoutError::LunarMagicUnsupported { signature, missing }) => {
+            println!("layout:          unsupported Lunar Magic version ({signature}): {missing}");
         }
         Err(err) => println!("layout:          unavailable ({err})"),
     }
+    Ok(())
+}
+
+/// Counts what Lunar Magic added: edited levels, custom palettes, inserted ExGFX.
+fn print_lunar_magic_summary(rom: &Rom, layout: &RomLayout) -> anyhow::Result<()> {
+    let Some(lm) = &layout.lm else {
+        return Ok(());
+    };
+    let infos = smw_data::LevelId::all()
+        .map(|id| smw_data::level::LmLevelInfo::load(rom, layout, id))
+        .collect::<Result<Vec<_>, _>>()?;
+    let infos: Vec<_> = infos.into_iter().flatten().collect();
+    let relocated = infos.iter().filter(|i| i.flags.relocated_tilemap()).count();
+    let sixteen_bit = infos.iter().filter(|i| i.flags.sixteen_bit()).count();
+    let palettes = infos.iter().filter(|i| i.custom_palette.is_some()).count();
+    let exgfx = (0..0x80u32)
+        .filter(|i| {
+            lm.exgfx_ptrs
+                .checked_add(i.saturating_mul(3))
+                .and_then(|a| rom.read_u24_le(a).ok())
+                .is_some_and(|p| p != 0 && p != 0xFF_FFFF)
+        })
+        .count();
+    println!("  signature:     {:?}", RomLayout::lunar_magic_signature(rom).unwrap_or_default());
+    println!("  relocated layer 2 tilemaps: {relocated} ({sixteen_bit} 16-bit)");
+    println!("  custom palettes: {palettes}");
+    println!("  ExGFX 80-FF inserted: {exgfx}");
     Ok(())
 }

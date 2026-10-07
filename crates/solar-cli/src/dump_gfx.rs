@@ -5,7 +5,7 @@ use std::path::Path;
 
 use anyhow::Context as _;
 use smw_data::RomLayout;
-use smw_data::gfx::{GfxFile, GfxId};
+use smw_data::gfx::{EXGFX_FIRST, EXGFX_LAST, GfxError, GfxFile, GfxId};
 use smw_data::palette::{PaletteSelection, build_level_palette};
 use smw_render::{Raster, Rgba8};
 use snes_rom::Rom;
@@ -24,6 +24,8 @@ pub(crate) struct Options {
     pub(crate) scale: u32,
     /// Palette row to colour with; `None` means greyscale.
     pub(crate) row: Option<usize>,
+    /// Also dump every inserted ExGFX file (Lunar Magic ROMs).
+    pub(crate) exgfx: bool,
 }
 
 /// Dumps one file or every file in the vanilla table.
@@ -38,12 +40,18 @@ pub(crate) fn run(rom_path: &Path, out_dir: &Path, options: Options) -> anyhow::
         }
         None => None,
     };
-    let ids: Vec<GfxId> = match options.id {
+    let mut ids: Vec<GfxId> = match options.id {
         Some(n) => vec![GfxId::new(n)],
         None => (0..u16::try_from(layout.gfx_ptrs.count).unwrap_or(0)).map(GfxId::new).collect(),
     };
+    if options.exgfx {
+        ids.extend((EXGFX_FIRST..=EXGFX_LAST).map(GfxId::new));
+    }
     for id in ids {
-        let file = GfxFile::load(&rom, &layout, id).with_context(|| format!("decoding {id}"))?;
+        let file = match GfxFile::load(&rom, &layout, id) {
+            Err(GfxError::NotInserted(_)) if options.exgfx => continue,
+            other => other.with_context(|| format!("decoding {id}"))?,
+        };
         let out = out_dir.join(format!("{id}.png"));
         write_sheet(&file, &out, options.scale.max(1), colors.as_deref())?;
         println!("{id}: {:?}, {} tiles -> {}", file.bpp, file.tiles.len(), out.display());

@@ -30,6 +30,8 @@ RAM the routine expects before the call:
 | `$68-$6A` | layer 2 data pointer | the raw layer 2 pointer (bank `$FF` for backgrounds) |
 | `$CE-$D0` | sprite data pointer | the level's sprite pointer (unused by this routine) |
 | `$0100` | game mode | `$22` so the trailing `JSL CODE_02A751` (sprite system init) is skipped |
+| `$0E-$0F` | level number | the level number; Lunar Magic's layer 2 hook (`$0E:F510`) indexes its flags table with it (verified 2026-10-06) |
+| `$010B-$010C` | level number (Lunar Magic's copy) | the level number |
 
 Everything else starts zeroed. No hardware registers are written (the bus
 counts and ignores any). Yoshi's Island 2 takes ~115k instructions.
@@ -57,5 +59,6 @@ two 16×27 screens at stride `0x1B0`, repeating horizontally
 
 - Layer 2 tile priority bits (layer 2 tiles with priority draw above layer 1).
 - Layer 3, HDMA gradients, animated tiles, sprites (M6).
-- Lunar Magic-expanded ROMs (bigger tables, SA-1): the same routine should
-  work once `RomLayout` knows the addresses.
+- Lunar Magic: the patched loader runs as is (verified on Quickie World 1/2,
+  2026-10-06); Map16 pages 2+ and ExGFX are resolved outside the loader
+  (`lunar-magic-ext.md`). SA-1 / ExLoROM ROMs are still rejected.

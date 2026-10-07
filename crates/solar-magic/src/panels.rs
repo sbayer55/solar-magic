@@ -153,11 +153,15 @@ impl Viewer<'_> {
             Layer2::Objects { stream, .. } => {
                 format!("{} objects at {}", stream.objects.len(), level.addresses.layer2)
             }
-            Layer2::Background { page, .. } => {
-                format!("background at {} (page {page})", level.addresses.layer2)
+            Layer2::Background { page_set, rows_per_screen, .. } => {
+                format!(
+                    "background at {} (page set {page_set}, {rows_per_screen} rows)",
+                    level.addresses.layer2
+                )
             }
         };
-        let rows: [(&str, String); 13] = [
+        let mut rows: Vec<(&str, String)> = vec![
+            ("Layout", self.doc.layout.kind.to_string()),
             ("Level", level.id.to_string()),
             ("Layer 1 data", level.addresses.layer1.to_string()),
             ("Layer 2", layer2),
@@ -197,6 +201,7 @@ impl Viewer<'_> {
             ("Layer 1 objects", level.layer1.objects.len().to_string()),
             ("Loader instructions", scene.loaded.steps.to_string()),
         ];
+        rows.extend(gfx_rows(scene));
         egui::Grid::new("info").num_columns(2).striped(true).show(ui, |ui| {
             for (k, v) in rows {
                 ui.label(k);
@@ -240,4 +245,31 @@ impl Viewer<'_> {
             }
         }
     }
+}
+
+/// Info rows about the GFX slots and, for Lunar Magic ROMs, its per-level data.
+fn gfx_rows(scene: &smw_render::scene::LevelScene) -> Vec<(&'static str, String)> {
+    let name =
+        |id: Option<smw_data::gfx::GfxId>| id.map_or_else(|| "-".to_owned(), |i| i.to_string());
+    let slots = &scene.gfx_slots;
+    let mut rows = vec![(
+        "GFX FG1/FG2/BG1/FG3",
+        format!(
+            "{} {} {} {}{}",
+            name(slots.layer[0]),
+            name(slots.layer[1]),
+            name(slots.layer[2]),
+            name(slots.layer[3]),
+            if slots.bypassed { " (bypass)" } else { "" }
+        ),
+    )];
+    if let Some(lm) = &scene.loaded.level.lm {
+        rows.push(("LM layer 2 flags", format!("{:#04X}", lm.flags.0)));
+        rows.push((
+            "Custom palette",
+            lm.custom_palette.map_or_else(|| "none".to_owned(), |a| a.to_string()),
+        ));
+        rows.push(("Map16 tiles 0x200+", scene.ext_tiles.len().to_string()));
+    }
+    rows
 }
