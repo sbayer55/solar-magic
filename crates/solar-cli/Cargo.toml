@@ -1,0 +1,24 @@
+[package]
+name = "solar-cli"
+description = "Command-line tools for inspecting and rendering Super Mario World ROMs."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "solar"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+image.workspace = true
+smw-data.workspace = true
+smw-render.workspace = true
+snes-rom.workspace = true
+
+[lints]
+workspace = true

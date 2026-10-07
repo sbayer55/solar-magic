@@ -1,0 +1,12 @@
+style_edition = "2024"
+max_width = 100
+newline_style = "Unix"
+use_field_init_shorthand = true
+use_try_shorthand = true
+use_small_heuristics = "Max"
+# The following improve import hygiene but are nightly-only; run
+# `cargo +nightly fmt` locally to apply them. They are not enforced in CI.
+# imports_granularity = "Crate"
+# group_imports = "StdExternalCrate"
+# wrap_comments = true
+# comment_width = 100

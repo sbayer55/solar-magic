@@ -1,0 +1,17 @@
+[package]
+name = "smw-data"
+description = "Super Mario World data formats: ROM layout, level headers, objects, sprites, Map16, GFX, palettes."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+lc-lz2.workspace = true
+snes-rom.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

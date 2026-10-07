@@ -1,0 +1,58 @@
+# Solar Magic
+
+Rust reimplementation of Lunar Magic (Super Mario World level editor).
+Read `docs/ARCHITECTURE.md` first; format details are in `docs/formats/`.
+
+## Commands
+
+```bash
+cargo build --workspace
+cargo test --workspace                       # unit tests; real-ROM tests skip without SMW_ROM
+SMW_ROM="roms/Super Mario World (USA).sfc" cargo test --workspace
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo fmt --all --check
+cargo xtask check                            # 1000-LOC file limit, lint hygiene
+cargo solar info "roms/Super Mario World (USA).sfc"
+cargo solar dump-gfx  "roms/Super Mario World (USA).sfc" <out_dir> [--id 14] [--row 2]
+cargo solar dump-map16 "roms/Super Mario World (USA).sfc" <out.png> [--tileset 0] [--bg]
+cargo solar dump-level "roms/Super Mario World (USA).sfc" 105
+cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> [--layers one|two|all]
+W65C816_TESTS_DIR=<dir of SingleStepTests 65816 v1 json> cargo test -p w65c816 --release --test single_step
+cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # GUI viewer
+```
+
+To check the GUI visually: launch it in the background, then `screencapture -x shot.png`
+and view the PNG (the bare cargo binary has no bundle id for app-level tools).
+
+All of the above must pass before a change is done. CI runs them on macOS,
+Linux and Windows.
+
+## Rules
+
+- **Verify every ROM address against the ROM before trusting a wiki.** Record
+  the verification (what, date) in the relevant `docs/formats/*.md`. The
+  SMWDisX disassembly (IsoFrieze, GitHub) plus its `SMW_U.sym` symbol file is
+  the best reference; read it, never commit it.
+- **Never commit ROMs, disassembly dumps, or Lunar Magic binaries.** `roms/`
+  is gitignored. Goldens derived from the ROM are local-only until decided
+  otherwise.
+- **All table addresses go through `smw_data::RomLayout`**, never hardcoded in
+  decoders. This is the seam for Lunar Magic-modified ROMs.
+- **Lint policy is strict** (see `Cargo.toml` `[workspace.lints]`): no
+  `unwrap`/`expect`/`panic`/indexing/`as`/bare arithmetic in library code.
+  Use `.get()`, `checked_*`/`wrapping_*`/`saturating_*`, `u32::from`,
+  `u8::try_from`. Small `Copy` types take `self` by value. Functions: ≤ 80
+  lines, cognitive complexity ≤ 15, ≤ 5 args (bundle into a struct). Files:
+  ≤ 1000 lines of code. Exceptions are item-scoped
+  `#[allow(lint, reason = "...")]`; `as` in `const fn` is the usual case.
+  Crate-level allows are only permitted in `solar-cli` and `xtask`.
+- Prefer dispatch tables and data (`const` arrays, `.toml`) over large `match`
+  statements.
+- Tests that need the ROM read `SMW_ROM` and return early with an `eprintln!`
+  when it is unset.
+- Parsed level data must re-serialize byte for byte (`Level::layer1_bytes`
+  etc.); the 512-level round-trip test enforces this.
+- Level tiles come from running the game's loader in `w65c816`
+  (`docs/formats/level-load-routine.md`), never from hand-ported object code.
+- `as` casts live only in `crates/w65c816/src/bits.rs` and `const fn`
+  accessors, each with an item-level allow and reason.
