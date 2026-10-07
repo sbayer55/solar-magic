@@ -1,0 +1,117 @@
+[workspace]
+resolver = "2"
+members = ["crates/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+license = "MIT"
+repository = "https://github.com/sbayer55/solar-magic"
+authors = ["Steven Bayer"]
+
+[workspace.dependencies]
+# internal
+snes-rom = { path = "crates/snes-rom" }
+lc-lz2 = { path = "crates/lc-lz2" }
+smw-render = { path = "crates/smw-render" }
+w65c816 = { path = "crates/w65c816" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+eframe = "0.36"
+egui = "0.36"
+egui_dock = "0.21"
+rfd = "0.17"
+smw-data = { path = "crates/smw-data" }
+# external
+anyhow = "1.0"
+bitflags = "2.13"
+clap = { version = "4.6", features = ["derive"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
+insta = "1.49"
+thiserror = "2.0"
+tokei = "15.0"
+tracing = "0.1"
+walkdir = "2.5"
+
+# ---------------------------------------------------------------------------
+# Lint policy (see docs/ARCHITECTURE.md "Code quality gates"). Every crate opts
+# in with `[lints] workspace = true`. CI runs clippy with `-D warnings`, so
+# everything at `warn` here is an error in CI.
+# ---------------------------------------------------------------------------
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+missing_debug_implementations = "warn"
+unused_qualifications = "warn"
+unreachable_pub = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_macro_rules = "warn"
+variant_size_differences = "warn"
+
+[workspace.lints.rustdoc]
+broken_intra_doc_links = "deny"
+private_intra_doc_links = "deny"
+missing_crate_level_docs = "warn"
+
+[workspace.lints.clippy]
+# groups (priority -1 so the single lints below override them)
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+cargo = { level = "warn", priority = -1 }
+
+# complexity and size gates (thresholds in clippy.toml)
+cognitive_complexity = "deny"
+too_many_lines = "deny"
+too_many_arguments = "deny"
+type_complexity = "deny"
+large_enum_variant = "deny"
+large_stack_arrays = "warn"
+large_types_passed_by_value = "warn"
+
+# restriction lints enforced project-wide
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+unimplemented = "deny"
+todo = "deny"
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
+indexing_slicing = "warn"
+arithmetic_side_effects = "warn"
+as_conversions = "warn"
+cast_possible_truncation = "deny"
+cast_possible_wrap = "deny"
+cast_sign_loss = "deny"
+cast_lossless = "deny"
+shadow_unrelated = "warn"
+undocumented_unsafe_blocks = "deny"
+missing_const_for_fn = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+wildcard_enum_match_arm = "warn"
+str_to_string = "warn"
+clone_on_ref_ptr = "warn"
+rc_buffer = "warn"
+mem_forget = "deny"
+rest_pat_in_fully_bound_structs = "warn"
+same_name_method = "warn"
+semicolon_if_nothing_returned = "warn"
+separated_literal_suffix = "warn"
+unneeded_field_pattern = "warn"
+verbose_file_reads = "warn"
+needless_pass_by_ref_mut = "warn"
+
+# deliberate relaxations
+module_name_repetitions = "allow" # `smw_data::level::LevelHeader` is the clearer name
+must_use_candidate = "allow"      # too noisy on small decoders
+multiple_crate_versions = "allow" # egui's dep tree duplicates; audited via cargo-deny
+cargo_common_metadata = "allow"   # until crates are published
+struct_excessive_bools = "allow"  # SMW header flags are genuinely many bools
+redundant_pub_crate = "allow"     # conflicts with rustc `unreachable_pub`, which we prefer

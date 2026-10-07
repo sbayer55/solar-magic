@@ -1,0 +1,237 @@
+//! Level data: headers, object streams, layer 2, sprites.
+//!
+//! Everything parsed here re-serializes to the exact bytes it came from
+//! ([`Level::layer1_bytes`] and friends), which is both the round-trip test
+//! and the basis for writing levels back later.
+
+mod header;
+mod layer2;
+mod objects;
+mod sprites;
+
+pub use header::{LevelMode, PrimaryHeader, SecondaryHeader};
+pub use layer2::{BG_TILEMAP_LEN, BgTilemap, Layer2, decode_bg_rle};
+pub use objects::{ObjectKind, ObjectStream, RawObject};
+pub use sprites::{Sprite, SpriteList};
+
+use snes_rom::{Rom, RomError, SnesAddr};
+
+use crate::{LevelId, RomLayout};
+
+/// Bank byte that marks a layer 2 pointer as a background tilemap.
+const LAYER2_BACKGROUND_BANK: u8 = 0xFF;
+
+/// Bank that background tilemaps actually live in.
+const LAYER2_BACKGROUND_REAL_BANK: u8 = 0x0C;
+
+/// A fully parsed level.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Level {
+    /// Which level this is.
+    pub id: LevelId,
+    /// Where each part was read from.
+    pub addresses: LevelAddresses,
+    /// The 5-byte primary header.
+    pub header: PrimaryHeader,
+    /// The 4 secondary header bytes.
+    pub secondary: SecondaryHeader,
+    /// Layer 1 objects.
+    pub layer1: ObjectStream,
+    /// Layer 2 objects or background.
+    pub layer2: Layer2,
+    /// Sprites.
+    pub sprites: SpriteList,
+}
+
+/// Source addresses of a level's parts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelAddresses {
+    /// Layer 1 data (header + objects).
+    pub layer1: SnesAddr,
+    /// Layer 2 pointer exactly as stored (bank `$FF` for backgrounds).
+    pub layer2_raw: SnesAddr,
+    /// Layer 2 data as actually read.
+    pub layer2: SnesAddr,
+    /// Sprite data.
+    pub sprites: SnesAddr,
+}
+
+/// Errors from loading a level.
+#[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
+pub enum LevelError {
+    /// The object stream ran off the end of the ROM without a terminator.
+    #[error("level {level}: {layer} object stream at {addr} is unterminated")]
+    UnterminatedObjects {
+        /// Level in question.
+        level: LevelId,
+        /// `"layer 1"` or `"layer 2"`.
+        layer: &'static str,
+        /// Where the stream starts.
+        addr: SnesAddr,
+    },
+
+    /// The sprite list ran off the end of the ROM without a terminator.
+    #[error("level {level}: sprite list at {addr} is unterminated")]
+    UnterminatedSprites {
+        /// Level in question.
+        level: LevelId,
+        /// Where the list starts.
+        addr: SnesAddr,
+    },
+
+    /// A background tilemap stream was malformed.
+    #[error("level {level}: background tilemap at {addr} is malformed ({reason})")]
+    BadBackground {
+        /// Level in question.
+        level: LevelId,
+        /// Where the stream starts.
+        addr: SnesAddr,
+        /// What went wrong.
+        reason: &'static str,
+    },
+
+    /// ROM access failed.
+    #[error(transparent)]
+    Rom(#[from] RomError),
+}
+
+impl Level {
+    /// Loads and parses a level.
+    ///
+    /// # Errors
+    ///
+    /// See [`LevelError`].
+    pub fn load(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<Self, LevelError> {
+        let index = u32::try_from(id.index()).unwrap_or(0);
+        let layer1_addr = rom.read_ptr(offset(layout.layer1_ptrs, index.saturating_mul(3))?)?;
+        let layer2_raw = rom.read_ptr(offset(layout.layer2_ptrs, index.saturating_mul(3))?)?;
+        let sprite_offset =
+            rom.read_u16_le(offset(layout.sprite_ptrs, index.saturating_mul(2))?)?;
+        let sprite_bank = match layout.sprite_banks {
+            Some(table) => rom.read_u8(offset(table, index)?)?,
+            None => layout.sprite_bank,
+        };
+        let sprites_addr = SnesAddr::from_parts(sprite_bank, sprite_offset);
+
+        let layer1_data = tail(rom, layer1_addr)?;
+        let header = PrimaryHeader::parse(layer1_data).ok_or(RomError::Unmapped(layer1_addr))?;
+        let layer1 =
+            ObjectStream::parse(layer1_data.get(PrimaryHeader::LEN..).unwrap_or(&[])).ok_or(
+                LevelError::UnterminatedObjects { level: id, layer: "layer 1", addr: layer1_addr },
+            )?;
+
+        let secondary = SecondaryHeader::load(rom, layout, id)?;
+
+        let (layer2_addr, layer2) = if layer2_raw.bank() == LAYER2_BACKGROUND_BANK {
+            let addr = SnesAddr::from_parts(LAYER2_BACKGROUND_REAL_BANK, layer2_raw.offset());
+            let (tilemap, compressed) =
+                decode_bg_rle(tail(rom, addr)?).ok_or(LevelError::BadBackground {
+                    level: id,
+                    addr,
+                    reason: "unterminated or overlong",
+                })?;
+            let page = u8::from(layer2_raw.offset() >= layer2::SECOND_PAGE_OFFSET);
+            (addr, Layer2::Background { page, tilemap, compressed })
+        } else {
+            let data = tail(rom, layer2_raw)?;
+            let header_copy: [u8; 5] = data
+                .get(..5)
+                .and_then(|b| b.try_into().ok())
+                .ok_or(RomError::Unmapped(layer2_raw))?;
+            let stream = ObjectStream::parse(data.get(5..).unwrap_or(&[])).ok_or(
+                LevelError::UnterminatedObjects { level: id, layer: "layer 2", addr: layer2_raw },
+            )?;
+            (layer2_raw, Layer2::Objects { header_copy, stream })
+        };
+
+        let sprites = SpriteList::parse(tail(rom, sprites_addr)?)
+            .ok_or(LevelError::UnterminatedSprites { level: id, addr: sprites_addr })?;
+
+        Ok(Self {
+            id,
+            addresses: LevelAddresses {
+                layer1: layer1_addr,
+                layer2_raw,
+                layer2: layer2_addr,
+                sprites: sprites_addr,
+            },
+            header,
+            secondary,
+            layer1,
+            layer2,
+            sprites,
+        })
+    }
+
+    /// The layer 1 data exactly as it should appear in ROM.
+    #[must_use]
+    pub fn layer1_bytes(&self) -> Vec<u8> {
+        let mut out = self.header.raw.to_vec();
+        out.extend(self.layer1.to_bytes());
+        out
+    }
+
+    /// The layer 2 data exactly as it should appear in ROM.
+    #[must_use]
+    pub fn layer2_bytes(&self) -> Vec<u8> {
+        self.layer2.to_bytes()
+    }
+
+    /// The sprite data exactly as it should appear in ROM.
+    #[must_use]
+    pub fn sprite_bytes(&self) -> Vec<u8> {
+        self.sprites.to_bytes()
+    }
+}
+
+/// The ROM from `addr` to the end of the image.
+fn tail(rom: &Rom, addr: SnesAddr) -> Result<&[u8], RomError> {
+    let pc = rom.pc(addr)?;
+    rom.bytes().get(pc..).ok_or(RomError::Unmapped(addr))
+}
+
+fn offset(base: SnesAddr, by: u32) -> Result<SnesAddr, RomError> {
+    base.checked_add(by).ok_or(RomError::Unmapped(base))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Level;
+    use crate::{LevelId, RomLayout};
+
+    /// Every vanilla level parses and re-serializes to its original bytes.
+    #[test]
+    fn real_rom_all_levels_round_trip() {
+        let Some(path) = std::env::var_os("SMW_ROM") else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = RomLayout::detect(&rom).expect("vanilla");
+        let mut backgrounds = 0;
+        for id in LevelId::all() {
+            let level =
+                Level::load(&rom, &layout, id).unwrap_or_else(|e| panic!("level {id}: {e}"));
+            let check = |name: &str, addr: snes_rom::SnesAddr, bytes: Vec<u8>| {
+                let pc = rom.pc(addr).expect("mapped");
+                let original = &rom.bytes()[pc..pc + bytes.len()];
+                assert_eq!(bytes, original, "level {id} {name} round trip");
+            };
+            check("layer1", level.addresses.layer1, level.layer1_bytes());
+            check("layer2", level.addresses.layer2, level.layer2_bytes());
+            check("sprites", level.addresses.sprites, level.sprite_bytes());
+            if matches!(level.layer2, super::Layer2::Background { .. }) {
+                backgrounds += 1;
+            }
+        }
+        assert!(backgrounds > 50, "expected many background levels, got {backgrounds}");
+
+        // Yoshi's Island 2 (level 105) is a well-known horizontal grass level.
+        let yi2 = Level::load(&rom, &layout, LevelId::new(0x105).expect("valid")).expect("loads");
+        assert_eq!(yi2.header.tileset(), 7, "Yoshi's Island 2 uses tileset 7 (Normal 2)");
+        assert!(!yi2.header.level_mode().is_vertical(&rom, &layout).expect("reads"));
+        assert!(yi2.layer1.objects.len() > 20);
+        assert!(yi2.sprites.sprites.len() > 5);
+    }
+}

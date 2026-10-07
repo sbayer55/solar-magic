@@ -1,0 +1,3 @@
+[alias]
+xtask = "run --quiet --package xtask --"
+solar = "run --quiet --package solar-cli --"

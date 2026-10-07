@@ -1,0 +1,28 @@
+[package]
+name = "solar-magic"
+description = "Solar Magic: a Super Mario World level viewer and (eventually) editor."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "solar-magic"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+eframe.workspace = true
+egui.workspace = true
+egui_dock.workspace = true
+rfd.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+smw-data.workspace = true
+smw-render.workspace = true
+snes-rom.workspace = true
+
+[lints]
+workspace = true

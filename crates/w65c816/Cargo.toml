@@ -1,0 +1,19 @@
+[package]
+name = "w65c816"
+description = "Minimal 65c816 interpreter: no timing, no PPU, just enough to run a game's data-building routines."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+
+[dev-dependencies]
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[lints]
+workspace = true

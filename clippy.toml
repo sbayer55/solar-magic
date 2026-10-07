@@ -1,0 +1,16 @@
+cognitive-complexity-threshold = 15
+too-many-lines-threshold = 80
+too-many-arguments-threshold = 5
+type-complexity-threshold = 150
+enum-variant-size-threshold = 200
+large-error-threshold = 128
+avoid-breaking-exported-api = false
+allow-unwrap-in-tests = true
+allow-panic-in-tests = true
+allow-useless-vec-in-tests = true
+allow-expect-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
+allow-indexing-slicing-in-tests = true
+msrv = "1.96"
+doc-valid-idents = ["LoROM", "HiROM", "ExLoROM", "ExHiROM", "SA-1", "Map16", "ExGFX", "LC_LZ2", "RATS", "WRAM", "BGR555", "FastROM", "SlowROM", ".."]

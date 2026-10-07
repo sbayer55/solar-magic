@@ -1,0 +1,18 @@
+[package]
+name = "smw-render"
+description = "Turns decoded Super Mario World data into RGBA rasters: tile atlases, Map16 tiles, level layers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+smw-data.workspace = true
+snes-rom.workspace = true
+thiserror.workspace = true
+w65c816.workspace = true
+
+[lints]
+workspace = true
