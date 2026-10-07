@@ -9,6 +9,9 @@ mod dump_gfx;
 mod dump_level;
 mod dump_map16;
 mod info;
+mod ips_apply;
+mod ips_create;
+mod ips_info;
 mod png;
 mod render;
 
@@ -104,6 +107,41 @@ enum Command {
         #[arg(long, default_value_t = 2)]
         scale: u32,
     },
+    /// Apply an IPS patch to a file (a ROM or anything else).
+    IpsApply {
+        /// Path to the `.ips` patch.
+        patch: PathBuf,
+        /// File to patch. It is only read, unless it is also `out`.
+        target: PathBuf,
+        /// Where to write the patched file.
+        out: PathBuf,
+        /// Add or strip the 512-byte copier header on the target before patching.
+        #[arg(long, value_enum, default_value_t = ips_apply::Header::Keep)]
+        header: ips_apply::Header,
+        /// Print one line per record applied.
+        #[arg(long)]
+        log: bool,
+    },
+    /// Create an IPS patch that turns `original` into `modified`.
+    IpsCreate {
+        /// The unmodified file.
+        original: PathBuf,
+        /// The modified file.
+        modified: PathBuf,
+        /// Where to write the `.ips` patch.
+        out: PathBuf,
+        /// Print one line per record created.
+        #[arg(long)]
+        log: bool,
+    },
+    /// Print what an IPS patch contains, record by record.
+    IpsInfo {
+        /// Path to the `.ips` patch.
+        patch: PathBuf,
+        /// Only print the first N records (default: all).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 /// Parses a hexadecimal byte with or without a `0x` prefix.
@@ -132,6 +170,13 @@ fn main() -> ExitCode {
             let options = dump_map16::Options { tileset, bg, bg_set, page, palettes, scale };
             dump_map16::run(&rom, &out, &options)
         }
+        Command::IpsApply { patch, target, out, header, log } => {
+            ips_apply::run(&patch, &target, &out, ips_apply::Options { header, log })
+        }
+        Command::IpsCreate { original, modified, out, log } => {
+            ips_create::run(&original, &modified, &out, log)
+        }
+        Command::IpsInfo { patch, limit } => ips_info::run(&patch, limit),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

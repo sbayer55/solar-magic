@@ -18,6 +18,9 @@ cargo solar dump-gfx  "roms/Super Mario World (USA).sfc" <out_dir> [--id 14] [--
 cargo solar dump-map16 "roms/Super Mario World (USA).sfc" <out.png> [--tileset 0] [--bg]
 cargo solar dump-level "roms/Super Mario World (USA).sfc" 105
 cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> [--layers one|two|all]
+cargo solar ips-apply <patch.ips> <target> <out> [--header keep|add|strip] [--log]
+cargo solar ips-create <original> <modified> <out.ips> [--log]
+cargo solar ips-info <patch.ips> [--limit N]
 W65C816_TESTS_DIR=<dir of SingleStepTests 65816 v1 json> cargo test -p w65c816 --release --test single_step
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # GUI viewer
 ```

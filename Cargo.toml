@@ -23,6 +23,7 @@ egui = "0.36"
 egui_dock = "0.21"
 rfd = "0.17"
 smw-data = { path = "crates/smw-data" }
+ips = { path = "crates/ips" }
 # external
 anyhow = "1.0"
 bitflags = "2.13"

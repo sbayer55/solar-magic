@@ -2001,6 +2001,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "ips"
+version = "0.1.0"
+dependencies = [
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "is_terminal_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3741,6 +3748,7 @@ dependencies = [
  "anyhow",
  "clap",
  "image",
+ "ips",
  "smw-data",
  "smw-render",
  "snes-rom",
@@ -3754,6 +3762,7 @@ dependencies = [
  "eframe",
  "egui",
  "egui_dock",
+ "ips",
  "rfd",
  "serde",
  "serde_json",

@@ -8,6 +8,7 @@ use smw_data::LevelId;
 use smw_render::scene::RenderOptions;
 
 use crate::document::Document;
+use crate::ips_tool::IpsTool;
 use crate::panels::{Tab, Viewer};
 
 /// Persisted between runs.
@@ -59,6 +60,7 @@ pub(crate) struct App {
     doc: Option<Document>,
     error: Option<String>,
     dock: DockState<Tab>,
+    ips: IpsTool,
 }
 
 const SETTINGS_KEY: &str = "solar-magic-settings";
@@ -81,6 +83,7 @@ impl App {
             doc: None,
             error: None,
             dock: default_layout(),
+            ips: IpsTool::default(),
         };
         if let Some(path) = path {
             app.open(&path);
@@ -127,6 +130,15 @@ impl App {
                         self.dock = default_layout();
                     }
                 });
+                ui.menu_button("Tools", |ui| {
+                    if ui.button("IPS Patcher…").clicked() {
+                        ui.close();
+                        if let Some(doc) = &self.doc {
+                            self.ips.prefill(&doc.path);
+                        }
+                        self.ips.open = true;
+                    }
+                });
                 if let Some(doc) = &self.doc {
                     ui.separator();
                     ui.label(format!("{}  —  level {}", doc.path.display(), doc.level));
@@ -165,6 +177,10 @@ impl eframe::App for App {
             egui::Panel::top("error").show(ui, |ui| {
                 ui.colored_label(egui::Color32::LIGHT_RED, error);
             });
+        }
+        self.ips.show(ui.ctx(), self.doc.as_ref().map(|doc| doc.path.as_path()));
+        if let Some(path) = self.ips.take_reload() {
+            self.open(&path);
         }
         let Some(doc) = self.doc.as_mut() else {
             self.welcome(ui);
