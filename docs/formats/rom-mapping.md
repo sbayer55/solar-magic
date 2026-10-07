@@ -25,7 +25,9 @@ them to SA-1 (`$23`); both are detected and rejected for now.
 ## Copier header
 
 Some dumps carry a 512-byte copier header. It is detected by
-`size % 1024 == 512` and stripped before anything else looks at the image.
+`size % 1024 == 512` (`snes_rom::copier_header::detect`) and stripped before
+anything else looks at the image. The same module can add or strip the header
+on raw file bytes for IPS patching; see `ips.md`.
 
 ## Internal header ($00:FFC0, 32 bytes parsed)
 

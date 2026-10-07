@@ -10,6 +10,7 @@
 //! Everything Super Mario World specific lives in `smw-data`.
 
 mod addr;
+pub mod copier_header;
 mod error;
 mod header;
 mod mapper;

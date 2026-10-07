@@ -17,6 +17,7 @@ long-term goal.
 | M5 layer 2 objects and backgrounds, compositing | done (tile priority bits pending) |
 | M6 sprites | position markers with sprite numbers (`--sprites`); real sprite graphics pending |
 | M7 egui viewer (`cargo run -p solar-magic -- <rom> [level]`) | done: level list, zoom/pan level view, info, Map16 and palette panels |
+| Tools: IPS patcher (`solar ips-apply` / `ips-create` / `ips-info`, GUI Tools → IPS Patcher) | done: Lunar IPS parity (RLE, expand/truncate, apply log, copier-header add/strip) |
 
 ## Try it
 
@@ -29,6 +30,9 @@ cargo solar dump-gfx "roms/Super Mario World (USA).sfc" out/gfx --row 2
 cargo solar dump-map16 "roms/Super Mario World (USA).sfc" out/map16.png --tileset 0
 cargo solar dump-level "roms/Super Mario World (USA).sfc" 105
 cargo solar render "roms/Super Mario World (USA).sfc" 105 out/level105.png --sprites
+cargo solar ips-info hack.ips
+cargo solar ips-apply hack.ips "roms/Super Mario World (USA).sfc" out/hack.smc --header add --log
+cargo solar ips-create original.sfc modified.sfc out/changes.ips
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # the viewer
 ```
 

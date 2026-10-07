@@ -7,8 +7,11 @@ level editor. This document is the map; the format details live in
 ## Crate graph
 
 ```
-solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump tools)
-        │                                   │
+solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump/patch tools)
+        │         │                         │         │
+        │         └────────────┬────────────│─────────┘
+        │                      ▼            │
+        │                     ips           │       IPS patch parse/apply/create
         └──────────────┬────────────────────┘
                        ▼
                   smw-render        Level → Map16 grid → RGBA raster
@@ -29,13 +32,14 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 
 | Crate | Status | Responsibility |
 |---|---|---|
-| `snes-rom` | done | `Rom`, `SnesAddr`, `Mapper`/`LoRom`, `InternalHeader`, `rats::scan`. No game knowledge. |
+| `snes-rom` | done | `Rom`, `SnesAddr`, `Mapper`/`LoRom`, `InternalHeader`, `rats::scan`, `copier_header` add/strip. No game knowledge. |
+| `ips` | done | IPS patch parse/serialize/apply/create with RLE and the Lunar IPS truncation extension; 16 MiB limit; avoids the `0x454F46` EOF-offset trap. No game knowledge. See `formats/ips.md`. |
 | `smw-data` | M0–M3 done | `RomLayout` (vanilla table addresses; Lunar Magic detection), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers, objects, layer 2, sprites; byte-exact re-serialization). |
 | `lc-lz2` | decompress done | LC_LZ2 decompress; compress later. |
 | `w65c816` | done | Minimal CPU interpreter with a `Bus` trait. No timing, no PPU. Passes the SingleStepTests 65816 native-mode suite (run with `W65C816_TESTS_DIR`). |
 | `smw-render` | M2–M6 done | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` + `level::load_level` run the game's loader and read back `TileGrid`s; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
-| `solar-cli` | `info`, `dump-gfx`, `dump-map16`, `dump-level`, `render` | One subcommand per milestone; also the test oracle. |
-| `solar-magic` | M7 done | eframe app with egui_dock panels: level list, zoomable level view (`egui::Scene`), info, Map16 sheet, palette. Remembers the last ROM and level. |
+| `solar-cli` | `info`, `dump-gfx`, `dump-map16`, `dump-level`, `render`, `ips-apply`, `ips-create`, `ips-info` | One subcommand per milestone; also the test oracle. |
+| `solar-magic` | M7 done | eframe app with egui_dock panels: level list, zoomable level view (`egui::Scene`), info, Map16 sheet, palette. Remembers the last ROM and level. Tools → IPS Patcher window (apply/create, copier-header add/strip, record log). |
 
 ## The vanilla / Lunar Magic seam
 
