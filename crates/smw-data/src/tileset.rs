@@ -4,9 +4,11 @@
 
 use snes_rom::{Rom, RomError, SnesAddr};
 
-use crate::RomLayout;
 use crate::gfx::GfxId;
+use crate::gfx_bypass::GfxBypass;
+use crate::level::PrimaryHeader;
 use crate::map16::TILESET_COUNT;
+use crate::{LevelId, RomLayout};
 
 /// Number of sprite sets in the vanilla table.
 pub const SPRITE_SET_COUNT: u8 = 16;
@@ -41,6 +43,46 @@ pub fn sprite_gfx_files(
         return Err(TilesetError::NoSuchSpriteSet(sprite_set));
     }
     read_four(rom, layout.sprite_gfx_list, sprite_set)
+}
+
+/// The GFX files a level uploads, after Lunar Magic's per-level bypass.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelGfxSlots {
+    /// `FG1`, `FG2`, `BG1`, `FG3`; `None` leaves the slot empty.
+    pub layer: [Option<GfxId>; 4],
+    /// `SP1`–`SP4`.
+    pub sprites: [Option<GfxId>; 4],
+    /// Whether a Lunar Magic bypass row was applied.
+    pub bypassed: bool,
+}
+
+/// The files a level loads: the tileset and sprite set lists, overridden
+/// slot by slot by the level's Lunar Magic bypass row when it is enabled.
+///
+/// # Errors
+///
+/// Table lookup or ROM read failures.
+pub fn level_gfx_slots(
+    rom: &Rom,
+    layout: &RomLayout,
+    id: LevelId,
+    header: PrimaryHeader,
+) -> Result<LevelGfxSlots, TilesetError> {
+    let layer = layer_gfx_files(rom, layout, header.tileset())?.map(Some);
+    let sprites = sprite_gfx_files(rom, layout, header.sprite_set())?.map(Some);
+    let mut slots = LevelGfxSlots { layer, sprites, bypassed: false };
+    if let Some(bypass) = GfxBypass::load(rom, layout, id)?
+        && bypass.enabled()
+    {
+        slots.bypassed = true;
+        for (slot, file) in slots.layer.iter_mut().zip(bypass.layer_files()) {
+            *slot = file.or(*slot);
+        }
+        for (slot, file) in slots.sprites.iter_mut().zip(bypass.sprite_files()) {
+            *slot = file.or(*slot);
+        }
+    }
+    Ok(slots)
 }
 
 fn read_four(rom: &Rom, table: SnesAddr, index: u8) -> Result<[GfxId; 4], TilesetError> {

@@ -1,13 +1,17 @@
 //! Composes a whole level picture: layers, background, sprite markers.
 //! Shared by the CLI and the editor.
 
-use smw_data::gfx::{GfxFile, GfxId};
-use smw_data::map16::{self, Map16Set};
-use smw_data::palette::{Palette, build_level_palette};
+use std::collections::HashMap;
+
+use smw_data::gfx::{GfxError, GfxFile, GfxId};
+use smw_data::map16::{self, Map16Set, Map16Tile};
+use smw_data::palette::{Palette, level_palette};
+use smw_data::tileset::{LevelGfxSlots, level_gfx_slots};
 use smw_data::{LevelId, RomLayout};
 use snes_rom::Rom;
 
-use crate::level::{HORIZONTAL_ROWS, LoadError, LoadedLevel, TileGrid, load_level};
+use crate::level::{LoadError, LoadedLevel, TileGrid, load_level};
+use crate::map16_ext::{FIRST_EXT_TILE, FgPageResolver};
 use crate::{CharAtlas, Raster, TileContext, draw_map16_tile};
 
 /// What to include in the picture.
@@ -34,12 +38,34 @@ pub struct LevelScene {
     pub loaded: LoadedLevel,
     /// The level's palette.
     pub palette: Palette,
+    /// Which GFX files were uploaded (after any Lunar Magic bypass).
+    pub gfx_slots: LevelGfxSlots,
     /// 8×8 characters for the tileset.
     pub atlas: CharAtlas,
     /// Foreground Map16 pages 0–1 for the tileset.
     pub fg_set: Map16Set,
-    /// Background Map16 set.
+    /// Foreground tiles 0x200+ the level uses (Lunar Magic pages 2+).
+    pub ext_tiles: HashMap<u16, Map16Tile>,
+    /// Background Map16 set (the page set the level's layer 2 selects).
     pub bg_set: Map16Set,
+}
+
+/// Where to find a foreground tile's definition: pages 0–1 from the tileset
+/// set, higher pages from the resolved extension tiles.
+#[derive(Debug, Clone, Copy)]
+pub struct Map16Lookup<'a> {
+    /// Pages 0–1.
+    pub pages01: &'a Map16Set,
+    /// Tiles 0x200 and up.
+    pub ext: &'a HashMap<u16, Map16Tile>,
+}
+
+impl Map16Lookup<'_> {
+    /// Tile `n`, if defined.
+    #[must_use]
+    pub fn get(&self, n: u16) -> Option<&Map16Tile> {
+        if n < FIRST_EXT_TILE { self.pages01.get(usize::from(n)) } else { self.ext.get(&n) }
+    }
 }
 
 /// Errors from building a scene.
@@ -51,7 +77,7 @@ pub enum SceneError {
     Load(#[from] LoadError),
     /// Graphics could not be decoded.
     #[error(transparent)]
-    Gfx(#[from] smw_data::gfx::GfxError),
+    Gfx(#[from] GfxError),
     /// Map16 data could not be read.
     #[error(transparent)]
     Map16(#[from] map16::Map16Error),
@@ -72,11 +98,17 @@ impl LevelScene {
     pub fn load(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<Self, SceneError> {
         let loaded = load_level(rom, layout, id)?;
         let header = &loaded.level.header;
-        let palette = build_level_palette(rom, layout, header.palette_selection())?;
-        let atlas = load_tileset_atlas(rom, layout, header.tileset())?;
+        let palette = level_palette(rom, layout, &loaded.level)?;
+        let gfx_slots = level_gfx_slots(rom, layout, id, *header)?;
+        let atlas = load_slot_atlas(rom, layout, &gfx_slots)?;
         let fg_set = map16::load_fg(rom, layout, header.tileset())?;
-        let bg_set = map16::load_bg(rom, layout)?;
-        Ok(Self { loaded, palette, atlas, fg_set, bg_set })
+        let ext_tiles = resolve_ext_tiles(rom, layout, &loaded)?;
+        let page_set = match loaded.level.layer2 {
+            smw_data::level::Layer2::Background { page_set, .. } => page_set,
+            smw_data::level::Layer2::Objects { .. } => 0,
+        };
+        let bg_set = map16::load_bg_set(rom, layout, page_set)?;
+        Ok(Self { loaded, palette, gfx_slots, atlas, fg_set, ext_tiles, bg_set })
     }
 
     /// Picture size in pixels.
@@ -99,7 +131,7 @@ impl LevelScene {
             self.draw_layer2(&mut raster, ctx);
         }
         if options.layer1 {
-            draw_grid(&mut raster, &self.loaded.layer1, &self.fg_set, ctx);
+            draw_grid(&mut raster, &self.loaded.layer1, self.map16(), ctx);
         }
         if options.sprites {
             crate::sprites::draw_sprite_markers(
@@ -111,17 +143,23 @@ impl LevelScene {
         raster
     }
 
+    /// The foreground Map16 lookup for this level.
+    #[must_use]
+    pub const fn map16(&self) -> Map16Lookup<'_> {
+        Map16Lookup { pages01: &self.fg_set, ext: &self.ext_tiles }
+    }
+
     fn draw_layer2(&self, raster: &mut Raster, ctx: TileContext<'_>) {
         if let Some(grid) = &self.loaded.layer2 {
-            draw_grid(raster, grid, &self.fg_set, ctx);
+            draw_grid(raster, grid, self.map16(), ctx);
         }
         let Some(background) = &self.loaded.background else {
             return;
         };
         for y in 0..self.loaded.layer1.height() {
             for x in 0..self.loaded.layer1.width() {
-                let Some(tile) =
-                    background_tile(background, x, y).and_then(|n| self.bg_set.get(usize::from(n)))
+                let Some(tile) = background_tile(background, self.loaded.background_rows, x, y)
+                    .and_then(|n| self.bg_set.get(usize::from(n)))
                 else {
                     continue;
                 };
@@ -142,11 +180,16 @@ impl LevelScene {
     }
 }
 
-/// Draws a grid of Map16 tiles from `set`.
-pub fn draw_grid(raster: &mut Raster, grid: &TileGrid, set: &Map16Set, ctx: TileContext<'_>) {
+/// Draws a grid of Map16 tiles through `lookup`.
+pub fn draw_grid(
+    raster: &mut Raster,
+    grid: &TileGrid,
+    lookup: Map16Lookup<'_>,
+    ctx: TileContext<'_>,
+) {
     for y in 0..grid.height() {
         for x in 0..grid.width() {
-            let Some(tile) = grid.get(x, y).and_then(|n| set.get(usize::from(n))) else {
+            let Some(tile) = grid.get(x, y).and_then(|n| lookup.get(n)) else {
                 continue;
             };
             draw_map16_tile(
@@ -159,20 +202,48 @@ pub fn draw_grid(raster: &mut Raster, grid: &TileGrid, set: &Map16Set, ctx: Tile
     }
 }
 
-/// Tile of the two-screen background at level tile `(x, y)`: screens are
-/// 16×27 row-major blocks of 0x1B0 bytes, repeating every two screens
-/// horizontally and every 27 rows vertically.
+/// Tile of the two-screen background at level tile `(x, y)`.
+///
+/// Screens are 16×`rows` row-major blocks (27 rows = 0x1B0 entries in
+/// vanilla, 32 rows = 0x200 in Lunar Magic 16-bit tilemaps), repeating every
+/// two screens horizontally and every `rows` rows vertically.
 #[must_use]
-pub fn background_tile(background: &[u16], x: usize, y: usize) -> Option<u16> {
+pub fn background_tile(background: &[u16], rows: u8, x: usize, y: usize) -> Option<u16> {
+    let rows = usize::from(rows.max(1));
     let screen = (x / 16) % 2;
+    let row = y.checked_rem(rows).unwrap_or(0);
     background
         .get(
             screen
-                .saturating_mul(0x1B0)
-                .saturating_add((y % HORIZONTAL_ROWS).saturating_mul(16))
+                .saturating_mul(rows.saturating_mul(16))
+                .saturating_add(row.saturating_mul(16))
                 .saturating_add(x % 16),
         )
         .copied()
+}
+
+/// Resolves every foreground tile 0x200+ the level's grids reference.
+fn resolve_ext_tiles(
+    rom: &Rom,
+    layout: &RomLayout,
+    loaded: &LoadedLevel,
+) -> Result<HashMap<u16, Map16Tile>, LoadError> {
+    let mut out = HashMap::new();
+    let Some(mut resolver) = FgPageResolver::new(rom, layout) else {
+        return Ok(out);
+    };
+    let grids = [Some(&loaded.layer1), loaded.layer2.as_ref()];
+    for grid in grids.into_iter().flatten() {
+        for &n in grid.tiles().iter().filter(|&&n| n >= FIRST_EXT_TILE) {
+            if out.contains_key(&n) {
+                continue;
+            }
+            if let Some(tile) = resolver.tile(n)? {
+                out.insert(n, tile);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// Loads the four layer GFX files a tileset uses into a character atlas.
@@ -186,9 +257,40 @@ pub fn load_tileset_atlas(
     tileset: u8,
 ) -> Result<CharAtlas, SceneError> {
     let ids = smw_data::tileset::layer_gfx_files(rom, layout, tileset)?;
-    let load = |id: GfxId| GfxFile::load(rom, layout, id);
-    let files = [load(ids[0])?, load(ids[1])?, load(ids[2])?, load(ids[3])?];
-    Ok(CharAtlas::from_layer_files(&files))
+    let slots = LevelGfxSlots { layer: ids.map(Some), sprites: [None; 4], bypassed: false };
+    load_slot_atlas(rom, layout, &slots)
+}
+
+/// Loads a level's layer slots into an atlas. Empty slots and ExGFX that
+/// were never inserted stay blank; other failures are errors.
+///
+/// # Errors
+///
+/// GFX decoding failures.
+pub fn load_slot_atlas(
+    rom: &Rom,
+    layout: &RomLayout,
+    slots: &LevelGfxSlots,
+) -> Result<CharAtlas, SceneError> {
+    let load = |id: Option<GfxId>| -> Result<Option<GfxFile>, GfxError> {
+        match id.map(|id| GfxFile::load(rom, layout, id)) {
+            None | Some(Err(GfxError::NotInserted(_))) => Ok(None),
+            Some(Ok(file)) => Ok(Some(file)),
+            Some(Err(e)) => Err(e),
+        }
+    };
+    let files = [
+        load(slots.layer[0])?,
+        load(slots.layer[1])?,
+        load(slots.layer[2])?,
+        load(slots.layer[3])?,
+    ];
+    Ok(CharAtlas::from_slots([
+        files[0].as_ref(),
+        files[1].as_ref(),
+        files[2].as_ref(),
+        files[3].as_ref(),
+    ]))
 }
 
 fn to_u32(v: usize) -> u32 {

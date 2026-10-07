@@ -95,6 +95,8 @@ pub struct LoadedLevel {
     /// Decoded background tilemap (two screens of BG Map16 numbers), when
     /// layer 2 is a background.
     pub background: Option<Vec<u16>>,
+    /// Rows per screen of `background` (27, or 32 for Lunar Magic 16-bit tilemaps).
+    pub background_rows: u8,
     /// Instructions the loader executed.
     pub steps: u64,
 }
@@ -131,6 +133,8 @@ pub fn load_level(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<LoadedLe
     bus.set_wram_u24(loader.ram_layer2_ptr, level.addresses.layer2_raw.get());
     bus.set_wram_u24(loader.ram_sprite_ptr, level.addresses.sprites.get());
     bus.set_wram(loader.ram_game_mode, GAME_MODE_SKIP_SPRITES);
+    bus.set_wram_u16(loader.ram_level_number, id.get());
+    bus.set_wram_u16(loader.ram_level_number_copy, id.get());
 
     let mut cpu = Cpu::new();
     cpu.brk_is_fatal = true;
@@ -140,7 +144,7 @@ pub fn load_level(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<LoadedLe
     let mode = level.header.level_mode().get();
     let layer1 =
         read_grid(rom, layout, &bus, GridShape { layer: Layer::One, mode, screens, vertical })?;
-    let (layer2, background) = match level.layer2 {
+    let (layer2, background, background_rows) = match level.layer2 {
         smw_data::level::Layer2::Objects { .. } => (
             Some(read_grid(
                 rom,
@@ -149,10 +153,21 @@ pub fn load_level(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<LoadedLe
                 GridShape { layer: Layer::Two, mode, screens, vertical },
             )?),
             None,
+            0,
         ),
-        smw_data::level::Layer2::Background { .. } => (None, Some(read_background(layout, &bus))),
+        smw_data::level::Layer2::Background { rows_per_screen, .. } => {
+            (None, Some(read_background(layout, &bus)), rows_per_screen)
+        }
     };
-    Ok(LoadedLevel { level, vertical, layer1, layer2, background, steps: cpu.steps })
+    Ok(LoadedLevel {
+        level,
+        vertical,
+        layer1,
+        layer2,
+        background,
+        background_rows,
+        steps: cpu.steps,
+    })
 }
 
 /// Geometry of the tile RAM for one layer of one level.

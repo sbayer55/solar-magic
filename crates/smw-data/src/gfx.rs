@@ -217,12 +217,24 @@ impl GfxFile {
     }
 }
 
-/// Resolves the ROM address of a file's compressed data.
+/// First ExGFX number.
+pub const EXGFX_FIRST: u16 = 0x80;
+/// First ExGFX number held in Lunar Magic's second (`100`–`FFF`) table.
+pub const EXGFX_HIGH_FIRST: u16 = 0x100;
+/// Last ExGFX number.
+pub const EXGFX_LAST: u16 = 0xFFF;
+
+/// Resolves the ROM address of a file's compressed data: the vanilla split
+/// tables for GFX00–GFX31, Lunar Magic's pointer tables for ExGFX.
 ///
 /// # Errors
 ///
-/// [`GfxError::NotInTable`] if the id is outside the table; ROM errors otherwise.
+/// [`GfxError::NotInTable`] if no table covers the id, [`GfxError::NotInserted`]
+/// if its ExGFX entry is empty; ROM errors otherwise.
 pub fn gfx_address(rom: &Rom, layout: &RomLayout, id: GfxId) -> Result<SnesAddr, GfxError> {
+    if id.get() >= EXGFX_FIRST {
+        return exgfx_address(rom, layout, id);
+    }
     let table = &layout.gfx_ptrs;
     let index = usize::from(id.get());
     if index >= table.count {
@@ -239,6 +251,24 @@ pub fn gfx_address(rom: &Rom, layout: &RomLayout, id: GfxId) -> Result<SnesAddr,
     Ok(SnesAddr::from_parts(bank, u16::from_le_bytes([low, high])))
 }
 
+/// Resolves an ExGFX file through Lunar Magic's two pointer tables.
+fn exgfx_address(rom: &Rom, layout: &RomLayout, id: GfxId) -> Result<SnesAddr, GfxError> {
+    let lm = layout.lm.as_ref().ok_or(GfxError::NotInTable(id))?;
+    let (table, index) = match id.get() {
+        n @ EXGFX_FIRST..EXGFX_HIGH_FIRST => (lm.exgfx_ptrs, n.wrapping_sub(EXGFX_FIRST)),
+        n @ EXGFX_HIGH_FIRST..=EXGFX_LAST => {
+            let table = rom.read_u24_le(lm.exgfx_high_table_ptr)?;
+            let table = SnesAddr::new(table).filter(|_| table != 0 && table != 0xFF_FFFF);
+            (table.ok_or(GfxError::NotInserted(id))?, n.wrapping_sub(EXGFX_HIGH_FIRST))
+        }
+        _ => return Err(GfxError::NotInTable(id)),
+    };
+    let entry =
+        table.checked_add(u32::from(index).saturating_mul(3)).ok_or(RomError::Unmapped(table))?;
+    let ptr = rom.read_u24_le(entry)?;
+    SnesAddr::new(ptr).filter(|_| ptr != 0 && ptr != 0xFF_FFFF).ok_or(GfxError::NotInserted(id))
+}
+
 /// Errors from loading or decoding graphics.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
@@ -246,6 +276,10 @@ pub enum GfxError {
     /// The id is not reachable through the ROM's pointer tables.
     #[error("{0} is not in this ROM's GFX pointer table")]
     NotInTable(GfxId),
+
+    /// The ExGFX pointer entry is empty: the file was never inserted.
+    #[error("{0} is not inserted in this ROM")]
+    NotInserted(GfxId),
 
     /// Raw data length is not a whole number of tiles.
     #[error("{id}: {len} bytes is not a whole number of tiles")]
@@ -344,6 +378,35 @@ mod tests {
         assert_eq!(GfxId::new(0x123).to_string(), "ExGFX123");
         assert!(GfxId::new(0x31).in_vanilla_table());
         assert!(!GfxId::new(0x32).in_vanilla_table());
+    }
+
+    /// Lunar Magic re-stores most vanilla files as 4bpp and adds ExGFX.
+    #[test]
+    fn lm_rom_gfx_and_exgfx_decode() {
+        let Some(path) = std::env::var_os("LM_ROM") else {
+            eprintln!("LM_ROM not set; skipping Lunar Magic ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = crate::RomLayout::detect(&rom).expect("lunar magic");
+        let mut four_bpp = 0;
+        for n in 0..0x32u16 {
+            let file = GfxFile::load(&rom, &layout, GfxId::new(n)).expect("vanilla id loads");
+            four_bpp += usize::from(file.bpp == Bpp::Four);
+        }
+        assert!(four_bpp > 0, "Lunar Magic re-stores files as 4bpp");
+        let mut inserted = 0;
+        for n in super::EXGFX_FIRST..=super::EXGFX_LAST {
+            match GfxFile::load(&rom, &layout, GfxId::new(n)) {
+                Ok(file) => {
+                    assert!(!file.tiles.is_empty(), "ExGFX{n:X}");
+                    inserted += 1;
+                }
+                Err(super::GfxError::NotInserted(_)) => {}
+                Err(e) => panic!("ExGFX{n:X}: {e}"),
+            }
+        }
+        assert!(inserted > 0, "expected some ExGFX");
     }
 
     /// Decodes every vanilla file when `SMW_ROM` is set.

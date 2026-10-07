@@ -30,20 +30,28 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 | Crate | Status | Responsibility |
 |---|---|---|
 | `snes-rom` | done | `Rom`, `SnesAddr`, `Mapper`/`LoRom`, `InternalHeader`, `rats::scan`. No game knowledge. |
-| `smw-data` | M0–M3 done | `RomLayout` (vanilla table addresses; Lunar Magic detection), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers, objects, layer 2, sprites; byte-exact re-serialization). |
+| `smw-data` | M0–M3, M8 done | `RomLayout` (vanilla tables plus Lunar Magic 2.5x's `LunarMagicTables`), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers, objects including Lunar Magic's, layer 2 including 16-bit tilemaps, sprites; byte-exact re-serialization). |
 | `lc-lz2` | decompress done | LC_LZ2 decompress; compress later. |
 | `w65c816` | done | Minimal CPU interpreter with a `Bus` trait. No timing, no PPU. Passes the SingleStepTests 65816 native-mode suite (run with `W65C816_TESTS_DIR`). |
-| `smw-render` | M2–M6 done | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` + `level::load_level` run the game's loader and read back `TileGrid`s; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
+| `smw-render` | M2–M6, M8 done | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` + `level::load_level` run the game's loader and read back `TileGrid`s; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
 | `solar-cli` | `info`, `dump-gfx`, `dump-map16`, `dump-level`, `render` | One subcommand per milestone; also the test oracle. |
 | `solar-magic` | M7 done | eframe app with egui_dock panels: level list, zoomable level view (`egui::Scene`), info, Map16 sheet, palette. Remembers the last ROM and level. |
 
 ## The vanilla / Lunar Magic seam
 
 Every table address is read from a `smw_data::RomLayout` resolved once at open
-time. `RomLayout::detect` currently returns the vanilla layout or a clear
-error if the ROM carries a Lunar Magic signature. Lunar Magic support will add
-a second `LayoutKind` whose fields point at the relocated tables; decoders
-never hardcode addresses.
+time. `RomLayout::detect` returns the vanilla layout, or, for a ROM carrying a
+Lunar Magic signature whose routines match the 2.5x fingerprints, the vanilla
+layout plus `lm: Some(LunarMagicTables)` (`docs/formats/lunar-magic-ext.md`).
+Any other Lunar Magic version is refused with the first missing fingerprint.
+Decoders never hardcode addresses; Lunar Magic-only behaviour is gated on
+`layout.lm` / `layout.object_format()`.
+
+Done for Lunar Magic 2.5x: detection, level data (direct Map16 objects, 5-byte
+exits), 16-bit backgrounds, custom palettes, ExGFX and the per-level GFX
+bypass, Map16 pages 2+ (by running LM's getter in `w65c816`) and BG page
+sets. Open: the bypass table's extra slots (words 0–3, probably BG2/BG3/AN2),
+layer 3, sprites' graphics, and other LM versions.
 
 ## Rendering pipeline (planned)
 
