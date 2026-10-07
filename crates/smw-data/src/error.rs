@@ -13,11 +13,16 @@ pub enum LayoutError {
         title: String,
     },
 
-    /// The ROM has been modified by Lunar Magic, which is not supported yet.
-    #[error("ROM was saved by {signature:?}; Lunar Magic-modified ROMs are not supported yet")]
+    /// The ROM carries a Lunar Magic signature but not the 2.5x routines the
+    /// layout depends on.
+    #[error(
+        "ROM was saved by {signature:?}, but this Lunar Magic version is not supported: {missing} not found"
+    )]
     LunarMagicUnsupported {
         /// The version string Lunar Magic wrote into the ROM.
         signature: String,
+        /// Which expected routine or table was not where Lunar Magic 2.5x puts it.
+        missing: &'static str,
     },
 
     /// An underlying ROM access failed.

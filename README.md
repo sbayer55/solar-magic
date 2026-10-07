@@ -2,7 +2,7 @@
 
 A Rust reimplementation of [Lunar Magic](https://fusoya.eludevisibility.org/lm/),
 the Super Mario World level editor. Early days: the current milestone is a
-read-only level viewer for vanilla ROMs. Full Lunar Magic compatibility is the
+read-only level viewer for vanilla and Lunar Magic 2.5x ROMs. Full Lunar Magic compatibility is the
 long-term goal.
 
 ## Status
@@ -10,6 +10,7 @@ long-term goal.
 | Milestone | State |
 |---|---|
 | M0 ROM container, address mapping, header, RATS, layout seam, CI | done |
+| M8 Lunar Magic 2.5x ROMs: levels, backgrounds, palettes, ExGFX, Map16 pages | done |
 | M1 LC_LZ2, GFX and palette decoding (`solar dump-gfx`) | done |
 | M2 Map16 (`solar dump-map16`) | done |
 | M3 level headers, objects, sprites, layer 2 parse + 512-level round trip (`solar dump-level`) | done |

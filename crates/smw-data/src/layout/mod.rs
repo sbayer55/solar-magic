@@ -1,12 +1,22 @@
 //! Where SMW's data tables live in a given ROM.
 //!
-//! The addresses below are the vanilla USA ROM's. Each constant names the
-//! document that records how it was verified. Lunar Magic moves several of
-//! these tables; detection of such ROMs is in [`RomLayout::detect`].
+//! The vanilla USA ROM's addresses are in [`VANILLA`]; each field names the
+//! document that records how it was verified. Lunar Magic keeps those tables
+//! but adds its own, described by [`LunarMagicTables`]; [`RomLayout::detect`]
+//! picks the layout.
+
+mod lunar_magic;
+mod vanilla;
+
+use core::fmt;
 
 use snes_rom::{Rom, SnesAddr};
 
+pub use lunar_magic::{LM_25X, LunarMagicTables};
+pub use vanilla::VANILLA;
+
 use crate::LayoutError;
+use crate::level::ObjectFormat;
 
 /// The ASCII prefix Lunar Magic writes into ROMs it saves.
 ///
@@ -24,6 +34,22 @@ const SMW_TITLE: &str = "SUPER MARIOWORLD";
 pub enum LayoutKind {
     /// An unmodified retail ROM.
     Vanilla,
+    /// A ROM saved by Lunar Magic; the version is taken from its signature.
+    LunarMagic {
+        /// Major version (the `2` in `2.53`).
+        major: u8,
+        /// Minor version (the `53` in `2.53`).
+        minor: u8,
+    },
+}
+
+impl fmt::Display for LayoutKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Vanilla => f.write_str("Vanilla"),
+            Self::LunarMagic { major, minor } => write!(f, "Lunar Magic {major}.{minor:02}"),
+        }
+    }
 }
 
 /// The three parallel byte tables that make up a set of 24-bit pointers.
@@ -105,6 +131,11 @@ pub struct LevelLoader {
     pub ram_sprite_ptr: u32,
     /// Game mode byte (`$0100`); set to `$22` so post-load sprite init is skipped.
     pub ram_game_mode: u32,
+    /// 16-bit level number (`$0E`). Lunar Magic's layer 2 hook indexes its
+    /// per-level flag table with it, so the loader must see it.
+    pub ram_level_number: u32,
+    /// Lunar Magic's own copy of the level number (`$010B`).
+    pub ram_level_number_copy: u32,
     /// Decoded background tilemap low bytes (`$7E:B900`, 0x400 bytes).
     pub ram_bg_tilemap_low: u32,
     /// Decoded background tilemap high bytes (`$7E:BD00`, 0x400 bytes).
@@ -163,62 +194,11 @@ pub struct RomLayout {
 
     /// The level loader and its RAM. `docs/formats/level-load-routine.md`
     pub loader: LevelLoader,
-}
 
-/// The vanilla USA ROM layout.
-pub const VANILLA: RomLayout = RomLayout {
-    kind: LayoutKind::Vanilla,
-    layer1_ptrs: SnesAddr::lit(0x05_E000),
-    layer2_ptrs: SnesAddr::lit(0x05_E600),
-    sprite_ptrs: SnesAddr::lit(0x05_EC00),
-    sprite_bank: 0x07,
-    sprite_banks: None,
-    secondary_header: [
-        SnesAddr::lit(0x05_F000),
-        SnesAddr::lit(0x05_F200),
-        SnesAddr::lit(0x05_F400),
-        SnesAddr::lit(0x05_F600),
-    ],
-    gfx_ptrs: SplitPointerTable {
-        low: SnesAddr::lit(0x00_B992),
-        high: SnesAddr::lit(0x00_B9C4),
-        bank: SnesAddr::lit(0x00_B9F6),
-        count: 0x32,
-    },
-    palettes: PaletteTables {
-        back_area_colors: SnesAddr::lit(0x00_B0A0),
-        background: SnesAddr::lit(0x00_B0B0),
-        status_bar: SnesAddr::lit(0x00_B170),
-        foreground: SnesAddr::lit(0x00_B190),
-        standard: SnesAddr::lit(0x00_B250),
-        player: SnesAddr::lit(0x00_B2C8),
-        sprite: SnesAddr::lit(0x00_B318),
-        berry: SnesAddr::lit(0x00_B674),
-    },
-    map16: Map16Tables {
-        common: SnesAddr::lit(0x0D_8000),
-        bg_tiles: SnesAddr::lit(0x0D_9100),
-        tileset_locations: SnesAddr::lit(0x05_8000),
-        tileset_bank: 0x0D,
-        tileset_bitmask: SnesAddr::lit(0x05_81BB),
-        appearance_table: SnesAddr::lit(0x05_8776),
-        diagonal_pipes: SnesAddr::lit(0x0D_8A70),
-    },
-    layer_gfx_list: SnesAddr::lit(0x00_A92B),
-    sprite_gfx_list: SnesAddr::lit(0x00_A8C3),
-    level_mode_table: SnesAddr::lit(0x05_8417),
-    loader: LevelLoader {
-        entry: SnesAddr::lit(0x05_801E),
-        tile_ram_ptrs_low: SnesAddr::lit(0x00_BEA8),
-        tile_ram_ptrs_high: SnesAddr::lit(0x00_BEAC),
-        ram_layer1_ptr: 0x00_0065,
-        ram_layer2_ptr: 0x00_0068,
-        ram_sprite_ptr: 0x00_00CE,
-        ram_game_mode: 0x00_0100,
-        ram_bg_tilemap_low: 0x7E_B900,
-        ram_bg_tilemap_high: 0x7E_BD00,
-    },
-};
+    /// Lunar Magic's added tables, when the ROM was saved by a supported
+    /// Lunar Magic version. `docs/formats/lunar-magic-ext.md`
+    pub lm: Option<LunarMagicTables>,
+}
 
 impl RomLayout {
     /// Works out which layout a ROM uses.
@@ -227,16 +207,28 @@ impl RomLayout {
     ///
     /// - [`LayoutError::NotSmw`] if the header title is not SMW's.
     /// - [`LayoutError::LunarMagicUnsupported`] if the ROM carries a Lunar
-    ///   Magic signature. Reading such ROMs is planned but not implemented.
+    ///   Magic signature but the Lunar Magic 2.5x routines the layout relies
+    ///   on are not where they should be (another version, or not a level
+    ///   ROM at all).
     pub fn detect(rom: &Rom) -> Result<Self, LayoutError> {
         let title = &rom.header().title;
         if title != SMW_TITLE {
             return Err(LayoutError::NotSmw { title: title.clone() });
         }
-        if let Some(signature) = find_lunar_magic_signature(rom.bytes()) {
-            return Err(LayoutError::LunarMagicUnsupported { signature });
-        }
-        Ok(VANILLA)
+        find_lunar_magic_signature(rom.bytes())
+            .map_or(Ok(VANILLA), |signature| lunar_magic::detect(rom, signature))
+    }
+
+    /// How level object streams are encoded in this ROM.
+    #[must_use]
+    pub const fn object_format(&self) -> ObjectFormat {
+        if self.lm.is_some() { ObjectFormat::LunarMagic } else { ObjectFormat::Vanilla }
+    }
+
+    /// Whether this is a Lunar Magic layout.
+    #[must_use]
+    pub const fn is_lunar_magic(&self) -> bool {
+        self.lm.is_some()
     }
 
     /// Returns the Lunar Magic version string if the ROM carries one.
@@ -263,7 +255,20 @@ fn find_lunar_magic_signature(bytes: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::find_lunar_magic_signature;
+    use super::{LayoutKind, RomLayout, find_lunar_magic_signature};
+
+    #[test]
+    fn lm_rom_detects_as_lunar_magic() {
+        let Some(path) = std::env::var_os("LM_ROM") else {
+            eprintln!("LM_ROM not set; skipping Lunar Magic ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = RomLayout::detect(&rom).expect("supported");
+        assert!(matches!(layout.kind, LayoutKind::LunarMagic { major: 2, .. }), "{}", layout.kind);
+        assert!(layout.lm.is_some());
+        assert_eq!(layout.sprite_banks, layout.lm.map(|lm| lm.sprite_banks));
+    }
 
     #[test]
     fn signature_extraction() {

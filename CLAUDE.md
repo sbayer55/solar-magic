@@ -7,8 +7,9 @@ Read `docs/ARCHITECTURE.md` first; format details are in `docs/formats/`.
 
 ```bash
 cargo build --workspace
-cargo test --workspace                       # unit tests; real-ROM tests skip without SMW_ROM
-SMW_ROM="roms/Super Mario World (USA).sfc" cargo test --workspace
+cargo test --workspace                       # unit tests; real-ROM tests skip without SMW_ROM / LM_ROM
+# absolute paths: cargo runs each crate's tests from the crate directory
+SMW_ROM="$PWD/roms/Super Mario World (USA).sfc" LM_ROM="$PWD/roms/Patched_Quickie World 2/QW2.sfc" cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 cargo xtask check                            # 1000-LOC file limit, lint hygiene

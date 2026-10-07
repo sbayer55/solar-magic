@@ -71,3 +71,25 @@ Pixel `x` of row `y` takes bit `7-x` from each plane byte.
 
 Decoded tiles are stored as 64 palette indices (0–3, 0–7 or 0–15). Index 0 is
 transparent when drawn over another layer.
+
+## Lunar Magic
+
+Verified 2026-10-06 against both Quickie World ROMs (`lunar-magic-ext.md`).
+
+- The vanilla pointer tables are still used, but Lunar Magic re-stores every
+  file it touches (several in bank `$1E`) as LC_LZ2 **4bpp** (0x1000 bytes);
+  a few stay 3bpp (GFX27 in Quickie World 2). The GFX01/GFX17 plane quirk is
+  already applied in the 4bpp data, so Solar Magic only applies it to 3bpp
+  files (`dump-gfx --id 17 --row 2` renders identically on both ROMs).
+- ExGFX 80–FF: 24-bit pointers at `$0F:F600`, `000000` = not inserted.
+  ExGFX 100–FFF: the pointer at `$0F:F937` names a 0xF00-entry table of the
+  same shape. Files are LC_LZ2; sizes include 0x2000 (256 tiles 4bpp).
+  `GfxFile::load` resolves all of these; `dump-gfx --exgfx` dumps every
+  inserted file.
+- Per-level "Super GFX Bypass": the pointer at `$0F:F7FF` names a table of
+  32 bytes (16 little-endian words) per level. Word 0 bit 15 = enabled; words
+  4–7 = FG3, BG1, FG2, FG1; words 8–11 = SP4, SP3, SP2, SP1; words 12–15 =
+  GFX 2B, 2A, 29, 28; words 0–3 = extra slots (not decoded yet). `0x7F` = no
+  file, `0xFFFF` = row never written, low 12 bits = file number, upper bits =
+  flags. `gfx_bypass::GfxBypass` reads it and `tileset::level_gfx_slots`
+  applies it slot by slot over the tileset and sprite set lists.

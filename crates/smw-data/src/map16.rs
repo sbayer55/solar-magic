@@ -128,6 +128,12 @@ pub struct Map16Set {
 }
 
 impl Map16Set {
+    /// Wraps a list of tiles.
+    #[must_use]
+    pub const fn from_tiles(tiles: Vec<Map16Tile>) -> Self {
+        Self { tiles }
+    }
+
     /// Tile `n`, or `None` past the end.
     #[must_use]
     pub fn get(&self, n: usize) -> Option<&Map16Tile> {
@@ -166,6 +172,10 @@ pub enum Map16Error {
     /// Tileset number outside `0..15`.
     #[error("tileset {0} does not exist (vanilla has 15)")]
     NoSuchTileset(u8),
+
+    /// Background page set with no pointer in Lunar Magic's table.
+    #[error("background Map16 page set {0} does not exist")]
+    NoSuchPageSet(u8),
 
     /// ROM access failed.
     #[error(transparent)]
@@ -236,6 +246,54 @@ pub fn load_bg(rom: &Rom, layout: &RomLayout) -> Result<Map16Set, Map16Error> {
     Ok(Map16Set { tiles })
 }
 
+/// Tiles per Lunar Magic background page set (16 pages).
+pub const PAGE_SET_TILES: usize = 0x1000;
+
+/// Loads background page set `set`.
+///
+/// Set 0 of a vanilla ROM is the vanilla BG tiles; Lunar Magic ROMs have
+/// 16-page sets listed at `$0E:FD50` (`docs/formats/map16.md`). Lunar Magic
+/// sizes each set's block to the last tile it stored, so the result may hold
+/// fewer than 0x1000 tiles.
+///
+/// # Errors
+///
+/// [`Map16Error::NoSuchPageSet`] or ROM read failures.
+pub fn load_bg_set(rom: &Rom, layout: &RomLayout, set: u8) -> Result<Map16Set, Map16Error> {
+    let Some(lm) = &layout.lm else {
+        return if set == 0 { load_bg(rom, layout) } else { Err(Map16Error::NoSuchPageSet(set)) };
+    };
+    let entry = advance(lm.bg_page_sets, u32::from(set).saturating_mul(3))?;
+    let ptr = rom.read_u24_le(entry)?;
+    let base = SnesAddr::new(ptr)
+        .filter(|_| ptr != 0 && ptr != 0xFF_FFFF)
+        .ok_or(Map16Error::NoSuchPageSet(set))?;
+    let count = rats_bounded_count(rom, base).min(PAGE_SET_TILES);
+    let mut src = base;
+    let mut tiles = Vec::with_capacity(count);
+    for _ in 0..count {
+        tiles.push(read_tile(rom, src)?);
+        src = advance(src, TILE_BYTES)?;
+    }
+    Ok(Map16Set { tiles })
+}
+
+/// How many 8-byte tiles fit in the RATS block starting at `data`, or in
+/// the ROM if the block is untagged.
+fn rats_bounded_count(rom: &Rom, data: SnesAddr) -> usize {
+    let Ok(pc) = rom.pc(data) else {
+        return 0;
+    };
+    let len = pc
+        .checked_sub(snes_rom::rats::TAG_LEN)
+        .and_then(|tag_pc| snes_rom::rats::RatsTag::parse_at(rom.bytes(), tag_pc))
+        .map_or_else(|| rom.len().saturating_sub(pc), |tag| tag.data_len);
+    len / TILE_BYTES_USIZE
+}
+
+/// [`TILE_BYTES`] as a `usize`.
+const TILE_BYTES_USIZE: usize = 8;
+
 fn read_tile(rom: &Rom, addr: SnesAddr) -> Result<Map16Tile, RomError> {
     let bytes = rom.read(addr, 8)?;
     Map16Tile::from_bytes(bytes).ok_or(RomError::Unmapped(addr))
@@ -248,6 +306,23 @@ fn advance(addr: SnesAddr, by: u32) -> Result<SnesAddr, RomError> {
 #[cfg(test)]
 mod tests {
     use super::{Map16Tile, Tile8};
+
+    /// Lunar Magic's background page set 0 starts with the vanilla BG tiles.
+    #[test]
+    fn lm_rom_bg_page_set() {
+        let Some(path) = std::env::var_os("LM_ROM") else {
+            eprintln!("LM_ROM not set; skipping Lunar Magic ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = crate::RomLayout::detect(&rom).expect("lunar magic");
+        let set = super::load_bg_set(&rom, &layout, 0).expect("set 0");
+        assert!(set.len() >= 0x200 && set.len() <= super::PAGE_SET_TILES, "{}", set.len());
+        let first = set.get(0).expect("tile 0");
+        assert_eq!(first.top_left, Tile8::from_bytes(0xF8, 0x00));
+        assert_eq!(first.bottom_right, Tile8::from_bytes(0xF8, 0x00));
+        assert!(super::load_bg_set(&rom, &layout, 15).is_err());
+    }
 
     #[test]
     fn tile8_round_trip() {
