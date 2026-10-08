@@ -3,7 +3,9 @@
 use std::path::Path;
 
 use anyhow::Context as _;
+use smw_data::gfx_bypass::GfxBypass;
 use smw_data::level::{Layer2, Level, ObjectKind};
+use smw_data::tileset::level_gfx_slots;
 use smw_data::{LevelId, RomLayout};
 use snes_rom::Rom;
 
@@ -22,10 +24,11 @@ pub(crate) fn run(rom_path: &Path, number: u16, json: bool) -> anyhow::Result<()
     print_objects("Layer 1", &level.layer1);
     match &level.layer2 {
         Layer2::Objects { stream, .. } => print_objects("Layer 2", stream),
-        Layer2::Background { page, compressed, .. } => {
+        Layer2::Background { page_set, rows_per_screen, tiles, compressed } => {
             println!(
-                "\nLayer 2: background tilemap at {} (BG page {page}, {} compressed bytes)",
+                "\nLayer 2: background tilemap at {} (page set {page_set}, {rows_per_screen} rows/screen, first tile {:#05X}, {} compressed bytes)",
                 level.addresses.layer2,
+                tiles.first().copied().unwrap_or(0),
                 compressed.len()
             );
         }
@@ -84,6 +87,35 @@ fn print_headers(rom: &Rom, layout: &RomLayout, level: &Level) -> anyhow::Result
         level.sprites.sprite_memory(),
         level.sprites.buoyancy()
     );
+    let slots = level_gfx_slots(rom, layout, level.id, *h)?;
+    let name =
+        |id: Option<smw_data::gfx::GfxId>| id.map_or_else(|| "-".to_owned(), |i| i.to_string());
+    println!(
+        "  gfx: FG1 {} FG2 {} BG1 {} FG3 {}  SP1-4 {} {} {} {}{}",
+        name(slots.layer[0]),
+        name(slots.layer[1]),
+        name(slots.layer[2]),
+        name(slots.layer[3]),
+        name(slots.sprites[0]),
+        name(slots.sprites[1]),
+        name(slots.sprites[2]),
+        name(slots.sprites[3]),
+        if slots.bypassed { "  (Lunar Magic bypass)" } else { "" }
+    );
+    if let Some(bypass) = GfxBypass::load(rom, layout, level.id)? {
+        println!("  bypass row: {:04X?}", bypass.words);
+    }
+    if let Some(lm) = &level.lm {
+        println!(
+            "  lunar magic: flags {:#04X} (relocated tilemap: {}, 16-bit: {}, page {})  custom palette: {}  secondary 4-6: {:02X?}",
+            lm.flags.0,
+            lm.flags.relocated_tilemap(),
+            lm.flags.sixteen_bit(),
+            lm.flags.page(),
+            lm.custom_palette.map_or_else(|| "none".to_owned(), |a| a.to_string()),
+            lm.secondary_ext
+        );
+    }
     Ok(())
 }
 
@@ -103,6 +135,17 @@ fn print_objects(name: &str, stream: &smw_data::level::ObjectStream) {
                 )
             }
             ObjectKind::ScreenJump { screen } => format!("screen jump -> {screen:02X}"),
+            ObjectKind::ScreenExitExt { screen, destination, secondary, flags } => format!(
+                "LM screen exit scr {screen:02X} -> {destination:03X}{} flags {flags:02X}",
+                if secondary { " (secondary)" } else { "" }
+            ),
+            ObjectKind::DirectMap16 { tile, size } => {
+                format!("direct Map16 {tile:03X} size {size:02X}")
+            }
+            ObjectKind::DirectMap16Ext { tile, size, ext, ext_len } => format!(
+                "direct Map16 {tile:04X} size {size:02X} ext {:02X?}",
+                ext.get(..usize::from(ext_len)).unwrap_or(&[])
+            ),
         };
         let bytes: Vec<String> = o.as_bytes().iter().map(|b| format!("{b:02X}")).collect();
         println!(

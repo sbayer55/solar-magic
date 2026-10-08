@@ -3,6 +3,7 @@
 mod app;
 mod document;
 mod edit;
+mod ips_tool;
 mod panels;
 
 use std::path::PathBuf;

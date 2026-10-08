@@ -7,8 +7,11 @@ level editor. This document is the map; the format details live in
 ## Crate graph
 
 ```
-solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump tools)
-        │                                   │
+solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump/patch tools)
+        │         │                         │         │
+        │         └────────────┬────────────│─────────┘
+        │                      ▼            │
+        │                     ips           │       IPS patch parse/apply/create
         └──────────────┬────────────────────┘
                        ▼
                   smw-render        Level → Map16 grid → RGBA raster
@@ -29,21 +32,30 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 
 | Crate | Status | Responsibility |
 |---|---|---|
-| `snes-rom` | done | `Rom` (read, write, expand, checksum, save), `SnesAddr`, `Mapper`/`MapperKind`, `InternalHeader`, `rats::{scan, alloc}`. No game knowledge. |
-| `smw-data` | viewer + editing done | `RomLayout` (vanilla table addresses, known free space; Lunar Magic detection), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers with bit-field tables, objects, layer 2 with RLE codec, sprites, secondary exits; byte-exact re-serialization; editing API; vanilla-safe `save_level`). |
+| `snes-rom` | done | `Rom` (read, write, expand, checksum, save), `SnesAddr`, `Mapper`/`MapperKind`, `InternalHeader`, `rats::{scan, alloc}`, `copier_header` add/strip. No game knowledge. |
+| `ips` | done | IPS patch parse/serialize/apply/create with RLE and the Lunar IPS truncation extension; 16 MiB limit; avoids the `0x454F46` EOF-offset trap. No game knowledge. See `formats/ips.md`. |
+| `smw-data` | viewer, LM 2.5x reading, editing | `RomLayout` (vanilla tables plus Lunar Magic 2.5x's `LunarMagicTables`, known free space), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers with bit-field tables, objects including Lunar Magic's, layer 2 including 16-bit tilemaps with an RLE codec, sprites, secondary exits; byte-exact re-serialization; editing API; vanilla-safe `save_level`). |
 | `lc-lz2` | done | LC_LZ2 decompress and compress. |
 | `w65c816` | done | Minimal CPU interpreter with a `Bus` trait. No timing, no PPU. Passes the SingleStepTests 65816 native-mode suite (run with `W65C816_TESTS_DIR`). |
-| `smw-render` | viewer + ownership done | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
-| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`. Also the test oracle. |
-| `solar-magic` | editor | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette. Undo/redo, clipboard, Save / Save As. Remembers the last ROM and level. |
+| `smw-render` | viewer, LM 2.5x, ownership | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
+| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`. Also the test oracle. |
+| `solar-magic` | editor | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette. Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
 
 ## The vanilla / Lunar Magic seam
 
 Every table address is read from a `smw_data::RomLayout` resolved once at open
-time. `RomLayout::detect` currently returns the vanilla layout or a clear
-error if the ROM carries a Lunar Magic signature. Lunar Magic support will add
-a second `LayoutKind` whose fields point at the relocated tables; decoders
-never hardcode addresses.
+time. `RomLayout::detect` returns the vanilla layout, or, for a ROM carrying a
+Lunar Magic signature whose routines match the 2.5x fingerprints, the vanilla
+layout plus `lm: Some(LunarMagicTables)` (`docs/formats/lunar-magic-ext.md`).
+Any other Lunar Magic version is refused with the first missing fingerprint.
+Decoders never hardcode addresses; Lunar Magic-only behaviour is gated on
+`layout.lm` / `layout.object_format()`.
+
+Done for Lunar Magic 2.5x: detection, level data (direct Map16 objects, 5-byte
+exits), 16-bit backgrounds, custom palettes, ExGFX and the per-level GFX
+bypass, Map16 pages 2+ (by running LM's getter in `w65c816`) and BG page
+sets. Open: the bypass table's extra slots (words 0–3, probably BG2/BG3/AN2),
+layer 3, sprites' graphics, and other LM versions.
 
 ## Editing and saving
 

@@ -115,6 +115,8 @@ pub struct LoadedLevel {
     /// Decoded background tilemap (two screens of BG Map16 numbers), when
     /// layer 2 is a background.
     pub background: Option<Vec<u16>>,
+    /// Rows per screen of `background` (27, or 32 for Lunar Magic 16-bit tilemaps).
+    pub background_rows: u8,
     /// Which object stamped each tile.
     pub ownership: Ownership,
     /// Instructions the loader executed.
@@ -167,24 +169,39 @@ pub fn load_level_data(
     let mut inner = SnesBus::new(rom);
     let layer1_bytes = level.layer1_bytes();
     let layer2_bytes = level.layer2_bytes();
+    let lm_relocated = level.lm.is_some_and(|info| info.flags.relocated_tilemap());
+    let vanilla_bg_page = match &level.layer2 {
+        Layer2::Background { tiles, .. } => {
+            tiles.first().map_or(0, |t| usize::from(t.to_le_bytes()[1] & 1))
+        }
+        Layer2::Objects { .. } => 0,
+    };
     let layer2_addr = match &level.layer2 {
         Layer2::Objects { .. } => OVERLAY_LAYER2,
-        Layer2::Background { page, .. } => {
-            OVERLAY_BACKGROUND.get(usize::from(*page)).copied().unwrap_or(OVERLAY_BACKGROUND[0])
+        // Lunar Magic's relocated tilemaps are read from the ROM through its
+        // own flags table, so they are not overlaid.
+        Layer2::Background { .. } if lm_relocated => level.addresses.layer2_raw.get(),
+        Layer2::Background { .. } => {
+            OVERLAY_BACKGROUND.get(vanilla_bg_page).copied().unwrap_or(OVERLAY_BACKGROUND[0])
         }
     };
     let layer2_ptr = match &level.layer2 {
         Layer2::Objects { .. } => layer2_addr,
-        // The game recognises backgrounds by the `$FF` bank byte.
+        Layer2::Background { .. } if lm_relocated => layer2_addr,
+        // The game recognises vanilla backgrounds by the `$FF` bank byte.
         Layer2::Background { .. } => 0xFF_0000 | (layer2_addr & 0xFFFF),
     };
     inner.add_overlay(Overlay { start: OVERLAY_LAYER1, bytes: layer1_bytes });
-    inner.add_overlay(Overlay { start: layer2_addr, bytes: layer2_bytes });
+    if !lm_relocated {
+        inner.add_overlay(Overlay { start: layer2_addr, bytes: layer2_bytes });
+    }
     inner.add_overlay(Overlay { start: OVERLAY_SPRITES, bytes: level.sprite_bytes() });
     inner.set_wram_u24(loader.ram_layer1_ptr, OVERLAY_LAYER1);
     inner.set_wram_u24(loader.ram_layer2_ptr, layer2_ptr);
     inner.set_wram_u24(loader.ram_sprite_ptr, OVERLAY_SPRITES);
     inner.set_wram(loader.ram_game_mode, GAME_MODE_SKIP_SPRITES);
+    inner.set_wram_u16(loader.ram_level_number, level.id.get());
+    inner.set_wram_u16(loader.ram_level_number_copy, level.id.get());
 
     let mut bus = AttributedBus::new(inner, &level, OVERLAY_LAYER1, layer2_addr);
     let mut cpu = Cpu::new();
@@ -197,16 +214,28 @@ pub fn load_level_data(
     let shape2 = GridShape { layer: Layer::Two, mode, screens, vertical };
     let layer1 = read_grid(rom, layout, bus.inner(), shape1)?;
     let owners1 = read_cells(rom, layout, shape1, |lo, _| Some(bus.owner_at(Layer::One, lo)))?;
-    let (layer2, owners2, background) = match level.layer2 {
+    let (layer2, owners2, background, background_rows) = match level.layer2 {
         Layer2::Objects { .. } => (
             Some(read_grid(rom, layout, bus.inner(), shape2)?),
             Some(read_cells(rom, layout, shape2, |lo, _| Some(bus.owner_at(Layer::Two, lo)))?),
             None,
+            0,
         ),
-        Layer2::Background { .. } => (None, None, Some(read_background(layout, bus.inner()))),
+        Layer2::Background { rows_per_screen, .. } => {
+            (None, None, Some(read_background(layout, bus.inner())), rows_per_screen)
+        }
     };
     let ownership = Ownership::new(owners1, owners2);
-    Ok(LoadedLevel { level, vertical, layer1, layer2, background, ownership, steps: cpu.steps })
+    Ok(LoadedLevel {
+        level,
+        vertical,
+        layer1,
+        layer2,
+        background,
+        background_rows,
+        ownership,
+        steps: cpu.steps,
+    })
 }
 
 /// Geometry of the tile RAM for one layer of one level.

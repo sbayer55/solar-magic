@@ -11,6 +11,7 @@ use smw_render::scene::RenderOptions;
 
 use crate::document::Document;
 use crate::edit::EditCommand;
+use crate::ips_tool::IpsTool;
 use crate::panels::{ALL_TABS, Action, Tab, Viewer};
 
 /// Persisted between runs.
@@ -96,6 +97,7 @@ pub(crate) struct App {
     dock: DockState<Tab>,
     modal: Modal,
     close_confirmed: bool,
+    ips: IpsTool,
 }
 
 const SETTINGS_KEY: &str = "solar-magic-settings";
@@ -130,6 +132,7 @@ impl App {
             dock: default_layout(),
             modal: Modal::None,
             close_confirmed: false,
+            ips: IpsTool::default(),
         };
         if let Some(path) = path {
             app.open(&path);
@@ -337,6 +340,7 @@ impl App {
                 self.edit_menu(ui);
                 self.view_menu(ui);
                 self.window_menu(ui);
+                self.tools_menu(ui);
                 if let Some(doc) = &self.doc {
                     ui.separator();
                     let dirty = if doc.is_dirty() { "*" } else { "" };
@@ -446,6 +450,18 @@ impl App {
             ui.separator();
             if ui.button("Reset layout").clicked() {
                 self.dock = default_layout();
+            }
+        });
+    }
+
+    fn tools_menu(&mut self, ui: &mut egui::Ui) {
+        ui.menu_button("Tools", |ui| {
+            if ui.button("IPS Patcher…").clicked() {
+                ui.close();
+                if let Some(doc) = &self.doc {
+                    self.ips.prefill(&doc.path);
+                }
+                self.ips.open = true;
             }
         });
     }
@@ -612,6 +628,10 @@ impl eframe::App for App {
             });
         }
         self.modal(&ctx);
+        self.ips.show(&ctx, self.doc.as_ref().map(|doc| doc.path.as_path()));
+        if let Some(path) = self.ips.take_reload() {
+            self.open(&path);
+        }
         let Some(doc) = self.doc.as_mut() else {
             self.welcome(ui);
             return;

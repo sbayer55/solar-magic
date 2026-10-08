@@ -9,6 +9,8 @@ mod exits;
 pub mod fields;
 mod header;
 mod layer2;
+mod lm_info;
+pub mod lm_objects;
 mod objects;
 mod save;
 mod screens;
@@ -18,8 +20,12 @@ pub use edit::{EditError, Layer, ObjectSpec, ScreenExitInfo, SpriteSpec, entranc
 pub use exits::{ExitId, SecondaryExit};
 pub use fields::{BitField, FieldError};
 pub use header::{LevelMode, PrimaryHeader, SecondaryHeader};
-pub use layer2::{BG_TILEMAP_LEN, BgTilemap, Layer2, decode_bg_rle, encode_bg_rle};
-pub use objects::{ObjectKind, ObjectStream, RawObject};
+pub use layer2::{
+    BG_ROWS, BG_ROWS_16BIT, BG_TILEMAP_LEN, BG_TILEMAP_LEN_16BIT, BgTilemap, DecodedBackground,
+    Layer2, decode_bg_rle, decode_bg_rle_capped, encode_bg_rle,
+};
+pub use lm_info::{LmLevelFlags, LmLevelInfo};
+pub use objects::{MAX_OBJECT_LEN, ObjectFormat, ObjectKind, ObjectStream, RawObject};
 pub use save::{Placement, SaveError, SaveOptions, SaveReport, pointer_refs, save_level};
 pub use screens::{SCREEN_TILES, TilePos, join_position, split_position};
 pub use sprites::{Sprite, SpriteList};
@@ -47,12 +53,16 @@ pub struct Level {
     pub secondary: SecondaryHeader,
     /// Whether the level mode is vertical (from the ROM's mode table).
     pub vertical: bool,
+    /// How objects are encoded (new objects are built in this format).
+    pub format: ObjectFormat,
     /// Layer 1 objects.
     pub layer1: ObjectStream,
     /// Layer 2 objects or background.
     pub layer2: Layer2,
     /// Sprites.
     pub sprites: SpriteList,
+    /// Lunar Magic's per-level records, for Lunar Magic layouts.
+    pub lm: Option<LmLevelInfo>,
 }
 
 /// Source addresses of a level's parts.
@@ -70,7 +80,7 @@ pub struct LevelAddresses {
 
 impl LevelAddresses {
     /// Reads a level's three pointers from the tables. `layer2` is the
-    /// address actually read (bank `$0C` for backgrounds).
+    /// address actually read (bank `$0C` for vanilla backgrounds).
     ///
     /// # Errors
     ///
@@ -151,36 +161,35 @@ impl Level {
         let layer2_raw = pointers.layer2_raw;
         let sprites_addr = pointers.sprites;
 
+        let format = layout.object_format();
         let layer1_data = tail(rom, layer1_addr)?;
         let header = PrimaryHeader::parse(layer1_data).ok_or(RomError::Unmapped(layer1_addr))?;
         let layer1 =
-            ObjectStream::parse(layer1_data.get(PrimaryHeader::LEN..).unwrap_or(&[])).ok_or(
-                LevelError::UnterminatedObjects { level: id, layer: "layer 1", addr: layer1_addr },
-            )?;
+            ObjectStream::parse(layer1_data.get(PrimaryHeader::LEN..).unwrap_or(&[]), format)
+                .ok_or(LevelError::UnterminatedObjects {
+                    level: id,
+                    layer: "layer 1",
+                    addr: layer1_addr,
+                })?;
 
         let secondary = SecondaryHeader::load(rom, layout, id)?;
         let vertical = header.level_mode().is_vertical(rom, layout)?;
+        let lm = LmLevelInfo::load(rom, layout, id)?;
+        let flags = lm.map(|info| info.flags).unwrap_or_default();
 
         let (layer2_addr, layer2) = if layer2_raw.bank() == LAYER2_BACKGROUND_BANK {
             let addr = SnesAddr::from_parts(LAYER2_BACKGROUND_REAL_BANK, layer2_raw.offset());
-            let (tilemap, compressed) =
-                decode_bg_rle(tail(rom, addr)?).ok_or(LevelError::BadBackground {
-                    level: id,
-                    addr,
-                    reason: "unterminated or overlong",
-                })?;
             let page = u8::from(layer2_raw.offset() >= layer2::SECOND_PAGE_OFFSET);
-            (addr, Layer2::Background { page, tilemap, compressed })
+            (addr, load_background(rom, id, addr, BackgroundShape::EightBit { page })?)
+        } else if flags.relocated_tilemap() {
+            let shape = if flags.sixteen_bit() {
+                BackgroundShape::SixteenBit { page_set: flags.page() }
+            } else {
+                BackgroundShape::EightBit { page: flags.page() }
+            };
+            (layer2_raw, load_background(rom, id, layer2_raw, shape)?)
         } else {
-            let data = tail(rom, layer2_raw)?;
-            let header_copy: [u8; 5] = data
-                .get(..5)
-                .and_then(|b| b.try_into().ok())
-                .ok_or(RomError::Unmapped(layer2_raw))?;
-            let stream = ObjectStream::parse(data.get(5..).unwrap_or(&[])).ok_or(
-                LevelError::UnterminatedObjects { level: id, layer: "layer 2", addr: layer2_raw },
-            )?;
-            (layer2_raw, Layer2::Objects { header_copy, stream })
+            (layer2_raw, load_layer2_objects(rom, id, layer2_raw, format)?)
         };
 
         let sprites = SpriteList::parse(tail(rom, sprites_addr)?)
@@ -197,9 +206,11 @@ impl Level {
             header,
             secondary,
             vertical,
+            format,
             layer1,
             layer2,
             sprites,
+            lm,
         })
     }
 
@@ -224,6 +235,57 @@ impl Level {
     }
 }
 
+/// How a background tilemap stream is to be decoded.
+#[derive(Debug, Clone, Copy)]
+enum BackgroundShape {
+    /// 0x400 tile low bytes, all on `page`.
+    EightBit {
+        /// BG page of every tile.
+        page: u8,
+    },
+    /// 0x400 low bytes followed by 0x400 high bytes (Lunar Magic).
+    SixteenBit {
+        /// Which 16-page BG Map16 set the tiles index.
+        page_set: u8,
+    },
+}
+
+/// Decodes the background tilemap at `addr`.
+fn load_background(
+    rom: &Rom,
+    id: LevelId,
+    addr: SnesAddr,
+    shape: BackgroundShape,
+) -> Result<Layer2, LevelError> {
+    let cap = match shape {
+        BackgroundShape::EightBit { .. } => BG_TILEMAP_LEN,
+        BackgroundShape::SixteenBit { .. } => BG_TILEMAP_LEN_16BIT,
+    };
+    let (decoded, compressed) = decode_bg_rle_capped(tail(rom, addr)?, cap)
+        .ok_or(LevelError::BadBackground { level: id, addr, reason: "unterminated or overlong" })?;
+    Ok(match shape {
+        BackgroundShape::EightBit { page } => Layer2::background_8bit(page, &decoded, compressed),
+        BackgroundShape::SixteenBit { page_set } => {
+            Layer2::background_16bit(page_set, &decoded, compressed)
+        }
+    })
+}
+
+/// Parses the layer 2 object stream (with its unused header copy) at `addr`.
+fn load_layer2_objects(
+    rom: &Rom,
+    id: LevelId,
+    addr: SnesAddr,
+    format: ObjectFormat,
+) -> Result<Layer2, LevelError> {
+    let data = tail(rom, addr)?;
+    let header_copy: [u8; 5] =
+        data.get(..5).and_then(|b| b.try_into().ok()).ok_or(RomError::Unmapped(addr))?;
+    let stream = ObjectStream::parse(data.get(5..).unwrap_or(&[]), format)
+        .ok_or(LevelError::UnterminatedObjects { level: id, layer: "layer 2", addr })?;
+    Ok(Layer2::Objects { header_copy, stream })
+}
+
 /// The ROM from `addr` to the end of the image.
 fn tail(rom: &Rom, addr: SnesAddr) -> Result<&[u8], RomError> {
     let pc = rom.pc(addr)?;
@@ -236,8 +298,66 @@ fn offset(base: SnesAddr, by: u32) -> Result<SnesAddr, RomError> {
 
 #[cfg(test)]
 mod tests {
-    use super::Level;
+    use super::{Layer2, Level, ObjectFormat, ObjectStream, PrimaryHeader};
     use crate::{LevelId, RomLayout};
+
+    /// Every Lunar Magic-tagged block re-serializes to exactly the bytes the
+    /// RATS tag protects, which pins every object length rule.
+    #[test]
+    fn lm_rom_rats_oracle() {
+        let Some(path) = std::env::var_os("LM_ROM") else {
+            eprintln!("LM_ROM not set; skipping Lunar Magic ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = RomLayout::detect(&rom).expect("lunar magic");
+        assert!(layout.is_lunar_magic());
+        let (mut tagged, mut sixteen_bit) = (0, 0);
+        for id in LevelId::all() {
+            let level =
+                Level::load(&rom, &layout, id).unwrap_or_else(|e| panic!("level {id}: {e}"));
+            let parts = [
+                ("layer1", level.addresses.layer1, level.layer1_bytes()),
+                ("layer2", level.addresses.layer2, level.layer2_bytes()),
+                ("sprites", level.addresses.sprites, level.sprite_bytes()),
+            ];
+            for (name, addr, bytes) in parts {
+                let pc = rom.pc(addr).expect("mapped");
+                assert_eq!(bytes, &rom.bytes()[pc..pc + bytes.len()], "level {id} {name}");
+                if let Some(tag) = pc
+                    .checked_sub(snes_rom::rats::TAG_LEN)
+                    .and_then(|tag_pc| snes_rom::rats::RatsTag::parse_at(rom.bytes(), tag_pc))
+                {
+                    assert_eq!(bytes.len(), tag.data_len, "level {id} {name} vs RATS size");
+                    tagged += 1;
+                }
+            }
+            if let Layer2::Background { rows_per_screen: 32, .. } = level.layer2 {
+                sixteen_bit += 1;
+            }
+        }
+        assert!(tagged >= 30, "expected many RATS-tagged blocks, got {tagged}");
+        assert!(sixteen_bit >= 5, "expected 16-bit backgrounds, got {sixteen_bit}");
+    }
+
+    /// Vanilla object streams mean the same thing under the Lunar Magic rules.
+    #[test]
+    fn real_rom_streams_agree_under_lm_format() {
+        let Some(path) = std::env::var_os("SMW_ROM") else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = RomLayout::detect(&rom).expect("vanilla");
+        for id in LevelId::all() {
+            let level = Level::load(&rom, &layout, id).expect("loads");
+            let pc = rom.pc(level.addresses.layer1).expect("mapped") + PrimaryHeader::LEN;
+            let lm = ObjectStream::parse(&rom.bytes()[pc..], ObjectFormat::LunarMagic)
+                .expect("terminated");
+            assert_eq!(lm.to_bytes(), level.layer1.to_bytes(), "level {id}");
+            assert_eq!(lm.objects.len(), level.layer1.objects.len(), "level {id}");
+        }
+    }
 
     /// Every vanilla level parses and re-serializes to its original bytes.
     #[test]
@@ -260,7 +380,7 @@ mod tests {
             check("layer1", level.addresses.layer1, level.layer1_bytes());
             check("layer2", level.addresses.layer2, level.layer2_bytes());
             check("sprites", level.addresses.sprites, level.sprite_bytes());
-            if matches!(level.layer2, super::Layer2::Background { .. }) {
+            if matches!(level.layer2, Layer2::Background { .. }) {
                 backgrounds += 1;
             }
         }

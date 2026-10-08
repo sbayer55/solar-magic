@@ -46,3 +46,19 @@ leaves them at whatever was in RAM too.
 
 Lunar Magic adds per-level custom palettes (full 16×16 images) at `$0E:F600`;
 see `lunar-magic-ext.md`.
+
+## Lunar Magic custom palettes
+
+Verified 2026-10-06 against both Quickie World ROMs (`lunar-magic-ext.md`).
+`$0E:F600` holds one 24-bit pointer per level (`000000` = none; all `FFFFFF`
+= the ROM has no custom palettes). Each pointer names a RATS-tagged 0x202-byte
+block:
+
+| Offset | Size | Content |
+|---|---|---|
+| 0 | 2 | back area colour (upload routine `$0E:F570` stores it at `$7E:0701`) |
+| 2 | 512 | colours 0–255, row-major, copied to `$7E:0703` |
+
+Colour 1 is not forced to `$7FDD` (levels override it). Implemented by
+`palette::load_custom_palette`; `palette::level_palette` picks it over the
+vanilla assembly when `LmLevelInfo::custom_palette` is set.

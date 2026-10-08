@@ -7,8 +7,9 @@ Read `docs/ARCHITECTURE.md` first; format details are in `docs/formats/`.
 
 ```bash
 cargo build --workspace
-cargo test --workspace                       # unit tests; real-ROM tests skip without SMW_ROM
-SMW_ROM="roms/Super Mario World (USA).sfc" cargo test --workspace
+cargo test --workspace                       # unit tests; real-ROM tests skip without SMW_ROM / LM_ROM
+# absolute paths: cargo runs each crate's tests from the crate directory
+SMW_ROM="$PWD/roms/Super Mario World (USA).sfc" LM_ROM="$PWD/roms/Patched_Quickie World 2/QW2.sfc" cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 cargo xtask check                            # 1000-LOC file limit, lint hygiene
@@ -21,6 +22,10 @@ cargo solar dump-exits "roms/Super Mario World (USA).sfc" [id]
 cargo solar dump-owners "roms/Super Mario World (USA).sfc" 105
 cargo solar expand <rom> <out> --size 1M        # also: free-space, rats, bg-rle, gfx-check
 cargo solar relocate-level <rom> <out> 105      # also: copy-level, apply-level (from dump-level --json)
+cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> [--layers one|two|all]
+cargo solar ips-apply <patch.ips> <target> <out> [--header keep|add|strip] [--log]
+cargo solar ips-create <original> <modified> <out.ips> [--log]
+cargo solar ips-info <patch.ips> [--limit N]
 W65C816_TESTS_DIR=<dir of SingleStepTests 65816 v1 json> cargo test -p w65c816 --release --test single_step
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # GUI editor
 ```

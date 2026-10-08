@@ -15,6 +15,9 @@ mod expand;
 mod free_space;
 mod gfx_check;
 mod info;
+mod ips_apply;
+mod ips_create;
+mod ips_info;
 mod level_io;
 mod png;
 mod render;
@@ -55,6 +58,9 @@ enum Command {
         /// instead of greyscale.
         #[arg(long)]
         row: Option<usize>,
+        /// Also dump every inserted ExGFX file (Lunar Magic ROMs).
+        #[arg(long)]
+        exgfx: bool,
     },
     /// Print a level's headers, objects and sprites.
     DumpLevel {
@@ -186,6 +192,12 @@ enum Command {
         /// Render the background tile set instead of the foreground pages.
         #[arg(long)]
         bg: bool,
+        /// With `--bg`: which Lunar Magic 16-page background set (default 0).
+        #[arg(long, default_value_t = 0)]
+        bg_set: u8,
+        /// Render one Lunar Magic foreground page (2 and up) instead of pages 0-1.
+        #[arg(long, value_parser = parse_hex_u8)]
+        page: Option<u8>,
         /// Palette set selections as `fg,bg,sprite,back` (each 0-7).
         #[arg(long, default_value = "0,0,0,0")]
         palettes: String,
@@ -193,12 +205,46 @@ enum Command {
         #[arg(long, default_value_t = 2)]
         scale: u32,
     },
+    /// Apply an IPS patch to a file (a ROM or anything else).
+    IpsApply {
+        /// Path to the `.ips` patch.
+        patch: PathBuf,
+        /// File to patch. It is only read, unless it is also `out`.
+        target: PathBuf,
+        /// Where to write the patched file.
+        out: PathBuf,
+        /// Add or strip the 512-byte copier header on the target before patching.
+        #[arg(long, value_enum, default_value_t = ips_apply::Header::Keep)]
+        header: ips_apply::Header,
+        /// Print one line per record applied.
+        #[arg(long)]
+        log: bool,
+    },
+    /// Create an IPS patch that turns `original` into `modified`.
+    IpsCreate {
+        /// The unmodified file.
+        original: PathBuf,
+        /// The modified file.
+        modified: PathBuf,
+        /// Where to write the `.ips` patch.
+        out: PathBuf,
+        /// Print one line per record created.
+        #[arg(long)]
+        log: bool,
+    },
+    /// Print what an IPS patch contains, record by record.
+    IpsInfo {
+        /// Path to the `.ips` patch.
+        patch: PathBuf,
+        /// Only print the first N records (default: all).
+        #[arg(long)]
+        limit: Option<usize>,
+    },
 }
 
 /// Parses a hexadecimal byte with or without a `0x` prefix.
 fn parse_hex_u8(s: &str) -> Result<u8, String> {
-    let value = parse_hex_u16(s)?;
-    u8::try_from(value).map_err(|_| format!("{s:?} does not fit in a byte"))
+    u8::try_from(parse_hex_u16(s)?).map_err(|_| format!("{s:?} does not fit in a byte"))
 }
 
 /// Parses a hexadecimal number with or without a `0x` prefix.
@@ -211,8 +257,8 @@ fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Info { rom } => info::run(&rom),
-        Command::DumpGfx { rom, out_dir, id, scale, row } => {
-            dump_gfx::run(&rom, &out_dir, dump_gfx::Options { id, scale, row })
+        Command::DumpGfx { rom, out_dir, id, scale, row, exgfx } => {
+            dump_gfx::run(&rom, &out_dir, dump_gfx::Options { id, scale, row, exgfx })
         }
         Command::DumpLevel { rom, level, json } => dump_level::run(&rom, level, json),
         Command::ApplyLevel { rom, out, json } => level_io::apply(&rom, &out, &json),
@@ -230,9 +276,17 @@ fn main() -> ExitCode {
         Command::Rats { rom } => free_space::rats_list(&rom),
         Command::BgRle { rom } => bg_rle::check(&rom),
         Command::GfxCheck { rom } => gfx_check::check(&rom),
-        Command::DumpMap16 { rom, out, tileset, bg, palettes, scale } => {
-            dump_map16::run(&rom, &out, &dump_map16::Options { tileset, bg, palettes, scale })
+        Command::DumpMap16 { rom, out, tileset, bg, bg_set, page, palettes, scale } => {
+            let options = dump_map16::Options { tileset, bg, bg_set, page, palettes, scale };
+            dump_map16::run(&rom, &out, &options)
         }
+        Command::IpsApply { patch, target, out, header, log } => {
+            ips_apply::run(&patch, &target, &out, ips_apply::Options { header, log })
+        }
+        Command::IpsCreate { original, modified, out, log } => {
+            ips_create::run(&original, &modified, &out, log)
+        }
+        Command::IpsInfo { patch, limit } => ips_info::run(&patch, limit),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

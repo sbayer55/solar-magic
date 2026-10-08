@@ -4,8 +4,9 @@ use std::path::Path;
 
 use anyhow::{Context as _, bail};
 use smw_data::RomLayout;
-use smw_data::map16::{self, Map16Set};
+use smw_data::map16::{self, Map16Set, Map16Tile};
 use smw_data::palette::{PaletteSelection, build_level_palette};
+use smw_render::map16_ext::FgPageResolver;
 use smw_render::scene::load_tileset_atlas;
 use smw_render::{Raster, TileContext, draw_map16_tile};
 use snes_rom::Rom;
@@ -22,6 +23,10 @@ pub(crate) struct Options {
     pub(crate) tileset: u8,
     /// Render the background set instead of the foreground pages.
     pub(crate) bg: bool,
+    /// Which Lunar Magic background page set (16 pages) to render.
+    pub(crate) bg_set: u8,
+    /// Render one foreground page 2+ (Lunar Magic) instead of pages 0-1.
+    pub(crate) page: Option<u8>,
     /// `fg,bg,sprite,back` palette set selections.
     pub(crate) palettes: String,
     /// Pixel scale factor.
@@ -36,7 +41,13 @@ pub(crate) fn run(rom_path: &Path, out: &Path, options: &Options) -> anyhow::Res
     let palette = build_level_palette(&rom, &layout, selection)?;
     let atlas = load_tileset_atlas(&rom, &layout, options.tileset)?;
     let set: Map16Set = if options.bg {
-        map16::load_bg(&rom, &layout)?
+        map16::load_bg_set(&rom, &layout, options.bg_set)?
+    } else if let Some(page) = options.page {
+        let mut resolver = FgPageResolver::new(&rom, &layout)
+            .context("--page needs a Lunar Magic ROM (pages 0-1 are the default)")?;
+        let tiles: Vec<Map16Tile> =
+            resolver.page(page)?.into_iter().map(Option::unwrap_or_default).collect();
+        Map16Set::from_tiles(tiles)
     } else {
         map16::load_fg(&rom, &layout, options.tileset)?
     };

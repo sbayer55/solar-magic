@@ -243,5 +243,13 @@ pub(crate) fn kind_name(kind: ObjectKind) -> String {
             )
         }
         ObjectKind::ScreenJump { screen } => format!("screen jump to {screen:X}"),
+        ObjectKind::ScreenExitExt { screen, destination, secondary, .. } => format!(
+            "LM exit on screen {screen:X} to {}{destination:03X}",
+            if secondary { "secondary " } else { "" }
+        ),
+        ObjectKind::DirectMap16 { tile, size } => format!("Map16 tile {tile:03X} size {size:02X}"),
+        ObjectKind::DirectMap16Ext { tile, size, .. } => {
+            format!("Map16 tile {tile:04X} size {size:02X}")
+        }
     }
 }

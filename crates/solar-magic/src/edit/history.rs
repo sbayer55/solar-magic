@@ -113,9 +113,11 @@ mod tests {
             header: PrimaryHeader { raw: [3, 0, 0, 0, 0] },
             secondary: SecondaryHeader { raw: [0; 4] },
             vertical: false,
+            format: smw_data::level::ObjectFormat::Vanilla,
             layer1: ObjectStream::default(),
             layer2: Layer2::Objects { header_copy: [0; 5], stream: ObjectStream::default() },
             sprites: SpriteList::default(),
+            lm: None,
         }
     }
 

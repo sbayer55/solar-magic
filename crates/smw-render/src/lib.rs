@@ -7,6 +7,7 @@
 mod atlas;
 pub mod emu;
 pub mod level;
+pub mod map16_ext;
 pub mod ownership;
 mod raster;
 pub mod scene;

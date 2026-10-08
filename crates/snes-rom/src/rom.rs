@@ -3,10 +3,9 @@
 use std::path::Path;
 use std::{fs, io};
 
-use crate::{InternalHeader, LoRom, MapKind, Mapper, MapperKind, RomError, SnesAddr};
-
-/// Size of the optional copier header some ROM dumps carry.
-const COPIER_HEADER_LEN: usize = 512;
+use crate::{
+    InternalHeader, LoRom, MapKind, Mapper, MapperKind, RomError, SnesAddr, copier_header,
+};
 
 /// File offset of the internal header for LoROM images.
 const LOROM_HEADER_PC: usize = 0x7FC0;
@@ -69,8 +68,8 @@ impl Rom {
     /// - [`RomError::UnsupportedMapping`] for HiROM, ExHiROM, SA-1 and ExLoROM
     ///   (not implemented yet).
     pub fn from_bytes(mut data: Vec<u8>) -> Result<Self, RomError> {
-        let copier_header = (data.len() % 1024 == COPIER_HEADER_LEN)
-            .then(|| data.drain(..COPIER_HEADER_LEN).collect::<Vec<u8>>());
+        let copier_header = copier_header::detect(data.len())
+            .then(|| data.drain(..copier_header::LEN).collect::<Vec<u8>>());
         if data.len() < 0x8000 {
             return Err(RomError::TooSmall { len: data.len() });
         }

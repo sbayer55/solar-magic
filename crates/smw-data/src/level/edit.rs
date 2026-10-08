@@ -216,7 +216,7 @@ impl Level {
         }
         self.check_bounds(spec.pos)?;
         let vertical = self.vertical;
-        let object = RawObject::at(spec.number, spec.third, spec.pos, vertical)
+        let object = RawObject::at(spec.number, spec.third, spec.pos, vertical, self.format)
             .ok_or(EditError::OutOfBounds { pos: spec.pos })?;
         let stream = self.stream_mut(layer)?;
         let at = at.min(stream.objects.len());
@@ -416,12 +416,15 @@ impl Level {
             .objects
             .iter()
             .filter_map(|o| match o.kind() {
-                ObjectKind::ScreenExit { screen, destination, secondary } => {
+                ObjectKind::ScreenExit { screen, destination, secondary }
+                | ObjectKind::ScreenExitExt { screen, destination, secondary, .. } => {
                     Some((screen, ScreenExitInfo { destination, secondary }))
                 }
                 ObjectKind::Standard { .. }
                 | ObjectKind::Extended { .. }
-                | ObjectKind::ScreenJump { .. } => None,
+                | ObjectKind::ScreenJump { .. }
+                | ObjectKind::DirectMap16 { .. }
+                | ObjectKind::DirectMap16Ext { .. } => None,
             })
             .collect()
     }
@@ -429,10 +432,9 @@ impl Level {
     /// Sets (or replaces) the exit of `screen`.
     pub fn set_screen_exit(&mut self, screen: u8, info: ScreenExitInfo) {
         let screen = screen & 0x1F;
-        let replacement = RawObject::screen_exit(screen, info.destination, info.secondary);
-        let existing = self.layer1.objects.iter().position(
-            |o| matches!(o.kind(), ObjectKind::ScreenExit { screen: s, .. } if s == screen),
-        );
+        let replacement =
+            RawObject::screen_exit(screen, info.destination, info.secondary, self.format);
+        let existing = self.layer1.objects.iter().position(|o| is_exit_on(o, screen));
         if let Some(slot) = existing.and_then(|index| self.layer1.objects.get_mut(index)) {
             slot.bytes = replacement.bytes;
             slot.set_new_screen(false);
@@ -447,11 +449,18 @@ impl Level {
     /// Removes the exit of `screen`, if any.
     pub fn remove_screen_exit(&mut self, screen: u8) {
         let screen = screen & 0x1F;
-        self.layer1.objects.retain(
-            |o| !matches!(o.kind(), ObjectKind::ScreenExit { screen: s, .. } if s == screen),
-        );
+        self.layer1.objects.retain(|o| !is_exit_on(o, screen));
         self.layer1.renormalize();
     }
+}
+
+/// Whether `object` is a screen exit (either format) for `screen`.
+fn is_exit_on(object: &RawObject, screen: u8) -> bool {
+    matches!(
+        object.kind(),
+        ObjectKind::ScreenExit { screen: s, .. } | ObjectKind::ScreenExitExt { screen: s, .. }
+            if s == screen
+    )
 }
 
 #[cfg(test)]
@@ -459,8 +468,8 @@ mod tests {
     use super::{EditError, Layer, ObjectSpec, ScreenExitInfo, SpriteSpec, TilePos};
     use crate::LevelId;
     use crate::level::{
-        Layer2, Level, LevelAddresses, ObjectStream, PrimaryHeader, SecondaryHeader, Sprite,
-        SpriteList,
+        Layer2, Level, LevelAddresses, ObjectFormat, ObjectStream, PrimaryHeader, SecondaryHeader,
+        Sprite, SpriteList,
     };
     use snes_rom::SnesAddr;
 
@@ -477,9 +486,11 @@ mod tests {
             header: PrimaryHeader { raw: [screens.saturating_sub(1), 0, 0, 0, 0] },
             secondary: SecondaryHeader { raw: [0; 4] },
             vertical,
+            format: ObjectFormat::Vanilla,
             layer1: ObjectStream::default(),
             layer2: Layer2::Objects { header_copy: [0; 5], stream: ObjectStream::default() },
             sprites: SpriteList::default(),
+            lm: None,
         }
     }
 
@@ -513,13 +524,12 @@ mod tests {
             Err(EditError::NoSuchObject { layer: Layer::One, index: 5 })
         );
         let bytes = lv.layer1_bytes();
-        assert_eq!(ObjectStream::parse(&bytes[5..]).expect("terminated"), lv.layer1);
+        assert_eq!(
+            ObjectStream::parse(&bytes[5..], ObjectFormat::Vanilla).expect("terminated"),
+            lv.layer1
+        );
 
-        lv.layer2 = Layer2::Background {
-            page: 0,
-            tilemap: Box::new([0; 0x400]),
-            compressed: vec![0xFF, 0xFF],
-        };
+        lv.layer2 = Layer2::background_8bit(0, &[0; 0x400], vec![0xFF, 0xFF]);
         assert_eq!(lv.insert_object(Layer::Two, 0, spec(0, 0)), Err(EditError::Layer2IsBackground));
         assert_eq!(lv.max_screens(), 32);
     }
@@ -572,7 +582,8 @@ mod tests {
         lv.set_screen_exit(2, updated);
         assert_eq!(lv.screen_exits().len(), 1);
         assert_eq!(lv.screen_exits().get(&2), Some(&updated));
-        let reparsed = ObjectStream::parse(&lv.layer1_bytes()[5..]).expect("terminated");
+        let reparsed = ObjectStream::parse(&lv.layer1_bytes()[5..], ObjectFormat::Vanilla)
+            .expect("terminated");
         assert_eq!(reparsed, lv.layer1);
         lv.remove_screen_exit(2);
         assert!(lv.screen_exits().is_empty());

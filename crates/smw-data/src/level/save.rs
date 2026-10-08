@@ -102,6 +102,10 @@ pub enum SaveError {
     /// Sprite data must live in the bank the game hardcodes.
     #[error("sprite data at {0} is not in bank ${1:02X}")]
     SpriteBank(SnesAddr, u8),
+    /// Saving into a Lunar Magic ROM needs its relocated tables and hijacks,
+    /// which are not written yet.
+    #[error("saving into Lunar Magic ROMs is not supported yet")]
+    LunarMagicRom,
     /// Allocation failed.
     #[error(transparent)]
     Rats(#[from] RatsError),
@@ -194,6 +198,9 @@ pub fn save_level(
     level: &Level,
     opts: &SaveOptions,
 ) -> Result<SaveReport, SaveError> {
+    if layout.is_lunar_magic() {
+        return Err(SaveError::LunarMagicRom);
+    }
     let mut work = rom.clone();
     let report = Saver::new(&mut work, layout, level, opts)?.run()?;
     *rom = work;
@@ -243,7 +250,10 @@ impl<'a> Saver<'a> {
                     self.relocate_fresh(&bytes, Slot::Layer2)?
                 }
             }
-            Layer2::Background { page, .. } => self.place_background(*page)?,
+            Layer2::Background { tiles, .. } => {
+                let page = tiles.first().map_or(0, |t| t.to_le_bytes()[1] & 1);
+                self.place_background(page)?
+            }
         };
         let sprites = self.place_sprites()?;
         let secondary_header = self.write_secondary_header()?;
@@ -296,10 +306,10 @@ impl<'a> Saver<'a> {
         }
         let data = self.rom.bytes().get(pc..)?;
         match kind {
-            Kind::Layer1 => ObjectStream::parse(data.get(PrimaryHeader::LEN..)?)
-                .map(|s| s.encoded_len().saturating_add(PrimaryHeader::LEN)),
-            Kind::Layer2Objects => ObjectStream::parse(data.get(PrimaryHeader::LEN..)?)
-                .map(|s| s.encoded_len().saturating_add(PrimaryHeader::LEN)),
+            Kind::Layer1 | Kind::Layer2Objects => {
+                ObjectStream::parse(data.get(PrimaryHeader::LEN..)?, self.level.format)
+                    .map(|s| s.encoded_len().saturating_add(PrimaryHeader::LEN))
+            }
             Kind::Background => decode_bg_rle(data).map(|(_, compressed)| compressed.len()),
             Kind::Sprites => SpriteList::parse(data).map(|s| s.to_bytes().len()),
         }

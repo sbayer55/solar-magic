@@ -1,6 +1,6 @@
 //! The 8×8 character table a level sees, mirroring the layer VRAM layout.
 
-use smw_data::gfx::{GfxFile, GfxId, Tile8Pixels};
+use smw_data::gfx::{Bpp, GfxFile, GfxId, Tile8Pixels};
 
 /// Number of 8×8 character slots addressable by a tilemap entry.
 pub const CHAR_COUNT: usize = 0x400;
@@ -61,9 +61,17 @@ impl CharAtlas {
     /// `BG1`, `FG3`). Files with fewer than 128 tiles leave the rest empty.
     #[must_use]
     pub fn from_layer_files(files: &[GfxFile; 4]) -> Self {
+        Self::from_slots([Some(&files[0]), Some(&files[1]), Some(&files[2]), Some(&files[3])])
+    }
+
+    /// Like [`CharAtlas::from_layer_files`], leaving `None` slots empty.
+    #[must_use]
+    pub fn from_slots(files: [Option<&GfxFile>; 4]) -> Self {
         let mut atlas = Self::new();
-        for (slot, file) in CharSlot::LAYER_SLOTS.iter().zip(files.iter()) {
-            atlas.load_slot(*slot, file);
+        for (slot, file) in CharSlot::LAYER_SLOTS.iter().zip(files) {
+            if let Some(file) = file {
+                atlas.load_slot(*slot, file);
+            }
         }
         atlas
     }
@@ -72,11 +80,17 @@ impl CharAtlas {
     /// upload quirk: in GFX01 and GFX17, tiles 0x6E, 0x6F, 0x7E and 0x7F get
     /// their fourth bitplane forced on so non-zero pixels use colours 8–15
     /// (`UploadGFXFile`, `$00:AA5F`). See `docs/formats/gfx.md`.
+    ///
+    /// The quirk is part of the 3bpp→4bpp conversion, so it only applies to
+    /// 3bpp files; Lunar Magic stores its files as 4bpp already converted.
     pub fn load_slot(&mut self, slot: CharSlot, file: &GfxFile) {
         for (i, tile) in file.tiles.iter().take(CHARS_PER_SLOT).enumerate() {
             if let Some(dst) = self.chars.get_mut(slot.base().saturating_add(i)) {
-                *dst =
-                    if uses_high_colors(file.id, i) { raise_to_high_colors(tile) } else { *tile };
+                *dst = if file.bpp == Bpp::Three && uses_high_colors(file.id, i) {
+                    raise_to_high_colors(tile)
+                } else {
+                    *tile
+                };
             }
         }
     }

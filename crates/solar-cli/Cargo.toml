@@ -18,6 +18,7 @@ clap.workspace = true
 image.workspace = true
 lc-lz2.workspace = true
 serde_json.workspace = true
+ips.workspace = true
 smw-data.workspace = true
 smw-render.workspace = true
 snes-rom.workspace = true

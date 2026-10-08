@@ -2,7 +2,7 @@
 //! and the position encoding that depends on the level orientation.
 //! See `docs/formats/level-objects.md`.
 
-use super::objects::{ObjectStream, RawObject};
+use super::objects::{MAX_OBJECT_LEN, ObjectFormat, ObjectKind, ObjectStream, RawObject};
 
 /// Tiles per screen along the scrolling axis.
 pub const SCREEN_TILES: u16 = 16;
@@ -54,11 +54,26 @@ pub fn join_position(screen: u8, x: u8, y: u8, vertical: bool) -> TilePos {
 }
 
 impl RawObject {
-    /// Whether the loader applies the vertical nibble swap to this object:
-    /// everything except screen exits and screen jumps.
+    /// Whether the object has a position: everything except screen exits and
+    /// screen jumps (the loader skips its vertical nibble swap for those).
     #[must_use]
-    pub const fn is_positioned(&self) -> bool {
-        self.number() != 0 || self.third() >= 2
+    pub fn is_positioned(&self) -> bool {
+        !matches!(
+            self.kind(),
+            ObjectKind::ScreenExit { .. }
+                | ObjectKind::ScreenJump { .. }
+                | ObjectKind::ScreenExitExt { .. }
+        )
+    }
+
+    /// An object built from its leading bytes in `format`.
+    fn from_bytes(leading: &[u8], format: ObjectFormat) -> Self {
+        let mut bytes = [0u8; MAX_OBJECT_LEN];
+        let len = leading.len().min(MAX_OBJECT_LEN);
+        if let (Some(dst), Some(src)) = (bytes.get_mut(..len), leading.get(..len)) {
+            dst.copy_from_slice(src);
+        }
+        Self { bytes, len: u8::try_from(len).unwrap_or(3), screen: 0, offset: 0, format }
     }
 
     /// Whether this is a screen jump (extended object 1).
@@ -67,33 +82,40 @@ impl RawObject {
         self.number() == 0 && self.third() == 1
     }
 
-    /// A standard or extended object with the given number, third byte and
-    /// position. Returns `None` if the position does not fit.
+    /// A standard or extended 3-byte object with the given number, third
+    /// byte and position. Returns `None` if the position does not fit.
     #[must_use]
-    pub fn at(number: u8, third: u8, pos: TilePos, vertical: bool) -> Option<Self> {
-        let mut object = Self {
-            bytes: [(number & 0x30) << 1, (number & 0x0F) << 4, third, 0],
-            len: 3,
-            screen: 0,
-            offset: 0,
-        };
+    pub fn at(
+        number: u8,
+        third: u8,
+        pos: TilePos,
+        vertical: bool,
+        format: ObjectFormat,
+    ) -> Option<Self> {
+        let mut object =
+            Self::from_bytes(&[(number & 0x30) << 1, (number & 0x0F) << 4, third], format);
         object.place(pos, vertical)?;
         Some(object)
     }
 
-    /// A screen exit on `screen` to `destination` (or secondary exit
-    /// `destination` when `secondary`).
+    /// A (vanilla, 4-byte) screen exit on `screen` to `destination` (or
+    /// secondary exit `destination` when `secondary`).
     #[must_use]
-    pub const fn screen_exit(screen: u8, destination: u16, secondary: bool) -> Self {
+    pub fn screen_exit(
+        screen: u8,
+        destination: u16,
+        secondary: bool,
+        format: ObjectFormat,
+    ) -> Self {
         let [low, high] = destination.to_le_bytes();
         let flags = (high & 0x01) | if secondary { 0x02 } else { 0 };
-        Self { bytes: [screen & 0x1F, flags, 0x00, low], len: 4, screen: 0, offset: 0 }
+        Self::from_bytes(&[screen & 0x1F, flags, 0x00, low], format)
     }
 
     /// A screen jump to `screen`.
     #[must_use]
-    pub const fn screen_jump(screen: u8) -> Self {
-        Self { bytes: [screen & 0x1F, 0x00, 0x01, 0], len: 3, screen: 0, offset: 0 }
+    pub fn screen_jump(screen: u8, format: ObjectFormat) -> Self {
+        Self::from_bytes(&[screen & 0x1F, 0x00, 0x01], format)
     }
 
     /// Sets the new-screen flag.
@@ -138,6 +160,7 @@ impl ObjectStream {
     /// offsets. Existing jumps are discarded and re-created only where a
     /// flag cannot express the change.
     pub fn renormalize(&mut self) {
+        let format = self.objects.first().map_or(ObjectFormat::Vanilla, |o| o.format);
         let mut out = Vec::with_capacity(self.objects.len());
         let mut current = 0u8;
         for mut object in self.objects.drain(..).filter(|o| !o.is_jump()) {
@@ -146,7 +169,7 @@ impl ObjectStream {
                 object.set_new_screen(true);
             } else {
                 if target != current {
-                    let mut jump = RawObject::screen_jump(target);
+                    let mut jump = RawObject::screen_jump(target, format);
                     jump.screen = current;
                     out.push(jump);
                 }
@@ -188,7 +211,7 @@ impl ObjectStream {
 #[cfg(test)]
 mod tests {
     use super::{ObjectStream, RawObject, TilePos, join_position, split_position};
-    use crate::level::ObjectKind;
+    use crate::level::{ObjectFormat, ObjectKind};
 
     #[test]
     fn positions_split_and_join() {
@@ -204,34 +227,41 @@ mod tests {
     #[test]
     fn object_round_trips_position_in_both_orientations() {
         let pos = TilePos::new(0x25, 0x1A);
-        let o = RawObject::at(0x3A, 0x22, pos, false).expect("fits");
+        let o = RawObject::at(0x3A, 0x22, pos, false, ObjectFormat::Vanilla).expect("fits");
         assert_eq!(o.kind(), ObjectKind::Standard { number: 0x3A, size: 0x22 });
         assert_eq!(o.position(false), Some(pos));
         assert_eq!(o.screen, 2);
-        assert_eq!(o.bytes, [0x60 | 0x1A, 0xA5, 0x22, 0]);
+        assert_eq!(&o.bytes[..3], &[0x60 | 0x1A, 0xA5, 0x22]);
 
         let vpos = TilePos::new(0x1F, 0x3B);
-        let v = RawObject::at(0x01, 0x11, vpos, true).expect("fits");
+        let v = RawObject::at(0x01, 0x11, vpos, true, ObjectFormat::Vanilla).expect("fits");
         assert_eq!(v.position(true), Some(vpos));
         assert_eq!(v.bytes[0] & 0x1F, 0x1F, "vertical: byte 0 holds x");
         assert_eq!(v.bytes[1] & 0x0F, 0x0B, "vertical: byte 1 holds y");
         assert_eq!(v.screen, 3);
 
-        let exit = RawObject::screen_exit(7, 0x105, true);
+        let exit = RawObject::screen_exit(7, 0x105, true, ObjectFormat::Vanilla);
         assert_eq!(
             exit.kind(),
             ObjectKind::ScreenExit { screen: 7, destination: 0x105, secondary: true }
         );
         assert_eq!(exit.position(false), None);
-        assert_eq!(RawObject::screen_jump(9).kind(), ObjectKind::ScreenJump { screen: 9 });
-        assert!(RawObject::at(0x01, 0x11, TilePos::new(0x200, 0), false).is_none());
+        assert_eq!(
+            RawObject::screen_jump(9, ObjectFormat::Vanilla).kind(),
+            ObjectKind::ScreenJump { screen: 9 }
+        );
+        assert!(
+            RawObject::at(0x01, 0x11, TilePos::new(0x200, 0), false, ObjectFormat::Vanilla)
+                .is_none()
+        );
     }
 
     #[test]
     fn renormalize_rewrites_flags_and_jumps() {
         let mut stream = ObjectStream::default();
         let mut push = |screen: u8| {
-            let mut o = RawObject::at(0x01, 0x11, TilePos::new(3, 4), false).expect("fits");
+            let mut o = RawObject::at(0x01, 0x11, TilePos::new(3, 4), false, ObjectFormat::Vanilla)
+                .expect("fits");
             o.screen = screen;
             stream.objects.push(o);
         };
@@ -249,7 +279,10 @@ mod tests {
                     ObjectKind::ScreenJump { screen } => Some(screen),
                     ObjectKind::Standard { .. }
                     | ObjectKind::Extended { .. }
-                    | ObjectKind::ScreenExit { .. } => None,
+                    | ObjectKind::ScreenExit { .. }
+                    | ObjectKind::ScreenExitExt { .. }
+                    | ObjectKind::DirectMap16 { .. }
+                    | ObjectKind::DirectMap16Ext { .. } => None,
                 };
                 (o.new_screen(), jump)
             })
@@ -267,7 +300,8 @@ mod tests {
             ]
         );
         // Re-parsing the bytes yields the same screens.
-        let parsed = ObjectStream::parse(&stream.to_bytes()).expect("terminated");
+        let parsed =
+            ObjectStream::parse(&stream.to_bytes(), ObjectFormat::Vanilla).expect("terminated");
         let screens: Vec<u8> = parsed
             .objects
             .iter()

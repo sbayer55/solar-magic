@@ -1,12 +1,22 @@
 //! Where SMW's data tables live in a given ROM.
 //!
-//! The addresses below are the vanilla USA ROM's. Each constant names the
-//! document that records how it was verified. Lunar Magic moves several of
-//! these tables; detection of such ROMs is in [`RomLayout::detect`].
+//! The vanilla USA ROM's addresses are in [`VANILLA`]; each field names the
+//! document that records how it was verified. Lunar Magic keeps those tables
+//! but adds its own, described by [`LunarMagicTables`]; [`RomLayout::detect`]
+//! picks the layout.
+
+mod lunar_magic;
+mod vanilla;
+
+use core::fmt;
 
 use snes_rom::{Rom, SnesAddr};
 
+pub use lunar_magic::{LM_25X, LunarMagicTables};
+pub use vanilla::{VANILLA, VANILLA_FREE_RANGES};
+
 use crate::LayoutError;
+use crate::level::ObjectFormat;
 
 /// The ASCII prefix Lunar Magic writes into ROMs it saves.
 ///
@@ -24,6 +34,22 @@ const SMW_TITLE: &str = "SUPER MARIOWORLD";
 pub enum LayoutKind {
     /// An unmodified retail ROM.
     Vanilla,
+    /// A ROM saved by Lunar Magic; the version is taken from its signature.
+    LunarMagic {
+        /// Major version (the `2` in `2.53`).
+        major: u8,
+        /// Minor version (the `53` in `2.53`).
+        minor: u8,
+    },
+}
+
+impl fmt::Display for LayoutKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Vanilla => f.write_str("Vanilla"),
+            Self::LunarMagic { major, minor } => write!(f, "Lunar Magic {major}.{minor:02}"),
+        }
+    }
 }
 
 /// The three parallel byte tables that make up a set of 24-bit pointers.
@@ -105,10 +131,28 @@ pub struct LevelLoader {
     pub ram_sprite_ptr: u32,
     /// Game mode byte (`$0100`); set to `$22` so post-load sprite init is skipped.
     pub ram_game_mode: u32,
+    /// 16-bit level number (`$0E`). Lunar Magic's layer 2 hook indexes its
+    /// per-level flag table with it, so the loader must see it.
+    pub ram_level_number: u32,
+    /// Lunar Magic's own copy of the level number (`$010B`).
+    pub ram_level_number_copy: u32,
     /// Decoded background tilemap low bytes (`$7E:B900`, 0x400 bytes).
     pub ram_bg_tilemap_low: u32,
     /// Decoded background tilemap high bytes (`$7E:BD00`, 0x400 bytes).
     pub ram_bg_tilemap_high: u32,
+}
+
+/// The player entrance position tables (`docs/formats/level-header.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntranceTables {
+    /// 16 low bytes of the entrance Y pixel, indexed by the Y position index.
+    pub y_low: SnesAddr,
+    /// 16 high bytes of the entrance Y pixel.
+    pub y_high: SnesAddr,
+    /// 8 low bytes of the entrance X pixel, indexed by the X position index.
+    pub x_low: SnesAddr,
+    /// 8 high bytes of the entrance X pixel.
+    pub x_high: SnesAddr,
 }
 
 /// A range of file offsets known to hold nothing (all `0xFF` in vanilla).
@@ -125,7 +169,7 @@ impl FreeRange {
         clippy::arithmetic_side_effects,
         reason = "const table constructor; every range below has end >= start"
     )]
-    const fn new(start: usize, end_inclusive: usize) -> Self {
+    pub(super) const fn new(start: usize, end_inclusive: usize) -> Self {
         Self { pc: start, len: end_inclusive - start + 1 }
     }
 
@@ -145,74 +189,6 @@ impl FreeRange {
     pub const fn bank(self) -> u8 {
         ((self.pc >> 15) & 0xFF) as u8
     }
-}
-
-/// Unused byte ranges in the vanilla USA ROM, as file offsets.
-///
-/// Taken from the SMWDisX file `freespace.txt` (which lists SNES addresses); every
-/// range was verified all-`0xFF` against the ROM on 2026-10-07. See
-/// `docs/formats/rats.md`.
-pub const VANILLA_FREE_RANGES: [FreeRange; 47] = [
-    FreeRange::new(0x00_3091, 0x00_309F), // $00:B091-B09F (freespace.txt lists B091; only this part is 0xFF)
-    FreeRange::new(0x00_3A4D, 0x00_3A5F), // $00:BA4D-BA5F
-    FreeRange::new(0x00_4453, 0x00_445F), // $00:C453-C45F
-    FreeRange::new(0x00_79F5, 0x00_7A0F), // $00:F9F5-FA0F
-    FreeRange::new(0x00_7F93, 0x00_7FBF), // $00:FF93-FFBF
-    FreeRange::new(0x00_AD54, 0x00_AD58), // $01:AD54-AD58
-    FreeRange::new(0x00_CD1E, 0x00_CD29), // $01:CD1E-CD29
-    FreeRange::new(0x00_E2B0, 0x00_E2C7), // $01:E2B0-E2C7
-    FreeRange::new(0x00_FFBF, 0x00_FFFF), // $01:FFBF-FFFF
-    FreeRange::new(0x01_35EC, 0x01_362F), // $02:B5EC-B62F
-    FreeRange::new(0x01_551E, 0x01_557F), // $02:D51E-D57F
-    FreeRange::new(0x01_7FE2, 0x01_7FFF), // $02:FFE2-FFFF
-    FreeRange::new(0x01_BA02, 0x01_BFFF), // $03:BA02-BFFF
-    FreeRange::new(0x01_D6AC, 0x01_D6FF), // $03:D6AC-D6FF
-    FreeRange::new(0x01_E05C, 0x01_E3FF), // $03:E05C-E3FF
-    FreeRange::new(0x01_FDE0, 0x01_FFFF), // $03:FDE0-FFFF
-    FreeRange::new(0x02_21B6, 0x02_23FF), // $04:A1B6-A3FF
-    FreeRange::new(0x02_6F3E, 0x02_727F), // $04:EF3E-F27F
-    FreeRange::new(0x02_7FB1, 0x02_7FFF), // $04:FFB1-FFFF
-    FreeRange::new(0x02_8E19, 0x02_8FFF), // $05:8E19-8FFF
-    FreeRange::new(0x02_A561, 0x02_A57F), // $05:A561-A57F
-    FreeRange::new(0x02_BBA6, 0x02_BBFF), // $05:BBA6-BBFF
-    FreeRange::new(0x02_CFEA, 0x02_CFFF), // $05:CFEA-CFFF
-    FreeRange::new(0x02_D665, 0x02_D707), // $05:D665-D707
-    FreeRange::new(0x02_DC46, 0x02_DFFF), // $05:DC46-DFFF
-    FreeRange::new(0x03_25B9, 0x03_25FF), // $06:A5B9-A5FF
-    FreeRange::new(0x03_4964, 0x03_4FFF), // $06:C964-CFFF
-    FreeRange::new(0x03_7539, 0x03_7FFF), // $06:F539-FFFF
-    FreeRange::new(0x03_80ED, 0x03_80FF), // $07:80ED-80FF
-    FreeRange::new(0x03_A179, 0x03_A5FF), // $07:A179-A5FF
-    FreeRange::new(0x03_C226, 0x03_C2FF), // $07:C226-C2FF
-    FreeRange::new(0x03_E76F, 0x03_EFFF), // $07:E76F-EFFF
-    FreeRange::new(0x03_FC90, 0x03_FFFF), // $07:FC90-FFFF
-    FreeRange::new(0x05_FD0D, 0x05_FFFF), // $0B:FD0D-FFFF
-    FreeRange::new(0x06_366F, 0x06_37FF), // $0C:B66F-B7FF
-    FreeRange::new(0x06_586F, 0x06_58FF), // $0C:D86F-D8FF
-    FreeRange::new(0x06_7FDF, 0x06_7FFF), // $0C:FFDF-FFFF
-    FreeRange::new(0x06_98C8, 0x06_98FF), // $0D:98C8-98FF
-    FreeRange::new(0x06_A0A0, 0x06_A0FF), // $0D:A0A0-A0FF
-    FreeRange::new(0x06_BB68, 0x06_BBFF), // $0D:BB68-BBFF
-    FreeRange::new(0x06_C620, 0x06_C7FF), // $0D:C620-C7FF
-    FreeRange::new(0x06_D282, 0x06_D3FF), // $0D:D282-D3FF
-    FreeRange::new(0x06_E186, 0x06_E2FF), // $0D:E186-E2FF
-    FreeRange::new(0x06_F08A, 0x06_F2FF), // $0D:F08A-F2FF
-    FreeRange::new(0x06_FE9F, 0x06_FFFF), // $0D:FE9F-FFFF
-    FreeRange::new(0x07_70F0, 0x07_7FFF), // $0E:F0F0-FFFF
-    FreeRange::new(0x07_EF90, 0x07_FFFF), // $0F:EF90-FFFF
-];
-
-/// The player entrance position tables (`docs/formats/level-header.md`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct EntranceTables {
-    /// 16 low bytes of the entrance Y pixel, indexed by the Y position index.
-    pub y_low: SnesAddr,
-    /// 16 high bytes of the entrance Y pixel.
-    pub y_high: SnesAddr,
-    /// 8 low bytes of the entrance X pixel, indexed by the X position index.
-    pub x_low: SnesAddr,
-    /// 8 high bytes of the entrance X pixel.
-    pub x_high: SnesAddr,
 }
 
 /// Resolved table locations for one ROM.
@@ -281,78 +257,14 @@ pub struct RomLayout {
 
     /// Byte ranges inside the original image known to be unused. These are
     /// the only places a vanilla-safe save may allocate below
-    /// `expanded_start_pc` (sprite data must stay in bank `$07`).
+    /// `expanded_start_pc` (sprite data must stay in bank `$07`). Empty for
+    /// Lunar Magic ROMs, which may have used them.
     pub known_free: &'static [FreeRange],
-}
 
-/// The vanilla USA ROM layout.
-pub const VANILLA: RomLayout = RomLayout {
-    kind: LayoutKind::Vanilla,
-    layer1_ptrs: SnesAddr::lit(0x05_E000),
-    layer2_ptrs: SnesAddr::lit(0x05_E600),
-    sprite_ptrs: SnesAddr::lit(0x05_EC00),
-    sprite_bank: 0x07,
-    sprite_banks: None,
-    secondary_header: [
-        SnesAddr::lit(0x05_F000),
-        SnesAddr::lit(0x05_F200),
-        SnesAddr::lit(0x05_F400),
-        SnesAddr::lit(0x05_F600),
-    ],
-    secondary_exits: [
-        SnesAddr::lit(0x05_F800),
-        SnesAddr::lit(0x05_FA00),
-        SnesAddr::lit(0x05_FC00),
-        SnesAddr::lit(0x05_FE00),
-    ],
-    gfx_ptrs: SplitPointerTable {
-        low: SnesAddr::lit(0x00_B992),
-        high: SnesAddr::lit(0x00_B9C4),
-        bank: SnesAddr::lit(0x00_B9F6),
-        count: 0x32,
-    },
-    palettes: PaletteTables {
-        back_area_colors: SnesAddr::lit(0x00_B0A0),
-        background: SnesAddr::lit(0x00_B0B0),
-        status_bar: SnesAddr::lit(0x00_B170),
-        foreground: SnesAddr::lit(0x00_B190),
-        standard: SnesAddr::lit(0x00_B250),
-        player: SnesAddr::lit(0x00_B2C8),
-        sprite: SnesAddr::lit(0x00_B318),
-        berry: SnesAddr::lit(0x00_B674),
-    },
-    map16: Map16Tables {
-        common: SnesAddr::lit(0x0D_8000),
-        bg_tiles: SnesAddr::lit(0x0D_9100),
-        tileset_locations: SnesAddr::lit(0x05_8000),
-        tileset_bank: 0x0D,
-        tileset_bitmask: SnesAddr::lit(0x05_81BB),
-        appearance_table: SnesAddr::lit(0x05_8776),
-        diagonal_pipes: SnesAddr::lit(0x0D_8A70),
-    },
-    layer_gfx_list: SnesAddr::lit(0x00_A92B),
-    sprite_gfx_list: SnesAddr::lit(0x00_A8C3),
-    level_mode_table: SnesAddr::lit(0x05_8417),
-    loader: LevelLoader {
-        entry: SnesAddr::lit(0x05_801E),
-        tile_ram_ptrs_low: SnesAddr::lit(0x00_BEA8),
-        tile_ram_ptrs_high: SnesAddr::lit(0x00_BEAC),
-        ram_layer1_ptr: 0x00_0065,
-        ram_layer2_ptr: 0x00_0068,
-        ram_sprite_ptr: 0x00_00CE,
-        ram_game_mode: 0x00_0100,
-        ram_bg_tilemap_low: 0x7E_B900,
-        ram_bg_tilemap_high: 0x7E_BD00,
-    },
-    entrance: EntranceTables {
-        y_low: SnesAddr::lit(0x05_D730),
-        y_high: SnesAddr::lit(0x05_D740),
-        x_low: SnesAddr::lit(0x05_D750),
-        x_high: SnesAddr::lit(0x05_D758),
-    },
-    expanded_start_pc: 0x08_0000,
-    known_free: &VANILLA_FREE_RANGES,
-};
+    /// Lunar Magic's added tables, when the ROM was saved by a supported
+    /// Lunar Magic version. `docs/formats/lunar-magic-ext.md`
+    pub lm: Option<LunarMagicTables>,
+}
 
 impl RomLayout {
     /// Works out which layout a ROM uses.
@@ -361,16 +273,28 @@ impl RomLayout {
     ///
     /// - [`LayoutError::NotSmw`] if the header title is not SMW's.
     /// - [`LayoutError::LunarMagicUnsupported`] if the ROM carries a Lunar
-    ///   Magic signature. Reading such ROMs is planned but not implemented.
+    ///   Magic signature but the Lunar Magic 2.5x routines the layout relies
+    ///   on are not where they should be (another version, or not a level
+    ///   ROM at all).
     pub fn detect(rom: &Rom) -> Result<Self, LayoutError> {
         let title = &rom.header().title;
         if title != SMW_TITLE {
             return Err(LayoutError::NotSmw { title: title.clone() });
         }
-        if let Some(signature) = find_lunar_magic_signature(rom.bytes()) {
-            return Err(LayoutError::LunarMagicUnsupported { signature });
-        }
-        Ok(VANILLA)
+        find_lunar_magic_signature(rom.bytes())
+            .map_or(Ok(VANILLA), |signature| lunar_magic::detect(rom, signature))
+    }
+
+    /// How level object streams are encoded in this ROM.
+    #[must_use]
+    pub const fn object_format(&self) -> ObjectFormat {
+        if self.lm.is_some() { ObjectFormat::LunarMagic } else { ObjectFormat::Vanilla }
+    }
+
+    /// Whether this is a Lunar Magic layout.
+    #[must_use]
+    pub const fn is_lunar_magic(&self) -> bool {
+        self.lm.is_some()
     }
 
     /// Returns the Lunar Magic version string if the ROM carries one.
@@ -397,7 +321,20 @@ fn find_lunar_magic_signature(bytes: &[u8]) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::find_lunar_magic_signature;
+    use super::{LayoutKind, RomLayout, find_lunar_magic_signature};
+
+    #[test]
+    fn lm_rom_detects_as_lunar_magic() {
+        let Some(path) = std::env::var_os("LM_ROM") else {
+            eprintln!("LM_ROM not set; skipping Lunar Magic ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = RomLayout::detect(&rom).expect("supported");
+        assert!(matches!(layout.kind, LayoutKind::LunarMagic { major: 2, .. }), "{}", layout.kind);
+        assert!(layout.lm.is_some());
+        assert_eq!(layout.sprite_banks, layout.lm.map(|lm| lm.sprite_banks));
+    }
 
     #[test]
     fn signature_extraction() {

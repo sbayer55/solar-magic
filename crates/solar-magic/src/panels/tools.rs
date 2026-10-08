@@ -141,7 +141,9 @@ fn object_editor(
         changed |= hex_word(ui, &mut y, 0x1FF);
         ui.end_row();
     });
-    if changed && let Some(replacement) = RawObject::at(number, third, TilePos::new(x, y), vertical)
+    if changed
+        && let Some(replacement) =
+            RawObject::at(number, third, TilePos::new(x, y), vertical, object.format)
     {
         actions.push(Action::Apply(EditCommand::ReplaceObject {
             layer,

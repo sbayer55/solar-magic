@@ -50,3 +50,29 @@ pages 0x10–0x11. Tile 0 is `F8 00` ×4 (blank).
 Vanilla has no per-tile "acts like" table; collision behaviour is decided by
 tile-number ranges in the collision code. Lunar Magic adds an explicit table
 for its expanded Map16. Deferred to the Lunar Magic compatibility work.
+
+## Lunar Magic
+
+Verified 2026-10-06 against both Quickie World ROMs (`lunar-magic-ext.md`).
+
+- **FG pages 0–1** still come from the vanilla tables above; Lunar Magic
+  edits them in place.
+- **FG pages 2–0x7F** are reached through Lunar Magic's getter at `$06:F540`:
+  `JSL` with 16-bit A/X, A = tile × 2; it returns the offset in A and the
+  bank in `$0C` (`STY $0B` with Y = bank << 8), and the caller does
+  `STA $0A; LDA [$0A],y` for the 8 tile bytes. The routine is a template
+  with one `ADC #imm / LDY #imm` pair per 16-page group (tiles 0x200–0xFFF
+  form the first group, then each 0x1000); `LDY #$0000` marks an
+  unallocated group. Quickie World 2 keeps tiles 0x200+ at `$17:8000`, Quickie
+  World 1 at `$12:EE10`; each block is RATS-sized to the last stored tile.
+  Solar Magic runs the routine in `w65c816` (`smw_render::map16_ext::FgPageResolver`)
+  instead of parsing the template, and bounds reads by the group's RATS tag.
+  `solar dump-map16 --page N` renders one such page.
+- **BG page sets**: `$0E:FD00` (called from `$05:8DA4` in place of
+  `LDA #$9100`) reads `$7F:C00B` bit 2 and indexes the 24-bit table at
+  `$0E:FD50` with the flags' high nibble; each entry is a set of 16 pages
+  (0x10–0x1F for set 0), RATS-sized, whose first 0x1000 bytes equal the
+  vanilla BG tiles. `map16::load_bg_set` reads them; `solar dump-map16 --bg
+  --bg-set N` renders one.
+- The tile record is the vanilla 8 bytes everywhere. The "acts like" table
+  at `$11:8000` (2 bytes per tile, via `$06:F600`) is not needed for viewing.
