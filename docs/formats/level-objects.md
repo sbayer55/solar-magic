@@ -46,6 +46,17 @@ The 0x3F standard object routines (`CODE_0DA40F` dispatch) and the extended
 object routines stamp Map16 tiles into `$7E:C800`/`$7F:C800`. Solar Magic
 runs them in a 65c816 interpreter (M4) rather than reimplementing them.
 
+## Loader facts that constrain writing (verified in SMWDisX 2026-10-07)
+
+- `LoadLevelData` (`$05:85FF`) reads each object with `LDA [$65],Y` and then
+  advances `$65` with a 16-bit add (`ADC $65` / `ADC #$00` into `$66`); the
+  bank byte `$67` is never incremented. A level's layer 1 (or layer 2 object)
+  data must therefore stay inside one bank, i.e. one 32 KiB LoROM chunk.
+- Vertical levels (`CODE_0585D8`): when the level is vertical the loader swaps
+  the low nibbles of bytes 0 and 1 for every object except extended objects
+  0 (screen exit) and 1 (screen jump). So in a vertical level byte 0 bits 0–3
+  hold X (low nibble), bit 4 the X high bit (right half of the 32-wide
+  screen), and byte 1 bits 0–3 hold Y within the 16-row screen.
 ## Lunar Magic objects
 
 Lunar Magic 2.5x fills standard object slots that vanilla never uses (vanilla

@@ -31,6 +31,8 @@ pub(crate) struct Options {
     pub(crate) scale: u32,
     /// Draw sprite position markers.
     pub(crate) sprites: bool,
+    /// Tint layer 1 tiles by owning object.
+    pub(crate) owners: bool,
 }
 
 /// Renders the level and writes `out`.
@@ -44,6 +46,7 @@ pub(crate) fn run(rom_path: &Path, out: &Path, options: Options) -> anyhow::Resu
         layer1: matches!(options.layers, Layers::One | Layers::All),
         layer2: matches!(options.layers, Layers::Two | Layers::All),
         sprites: options.sprites,
+        owners: options.owners,
     };
     let raster = scene.render(render_options);
     save_png(&raster.scaled(options.scale.max(1)), out)?;

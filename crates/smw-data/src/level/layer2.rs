@@ -30,7 +30,7 @@ pub type BgTilemap = Box<[u8; BG_TILEMAP_LEN]>;
 pub type DecodedBackground = (Vec<u8>, Vec<u8>);
 
 /// A level's layer 2 data.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum Layer2 {
     /// An object stream, preceded by an unused copy of a 5-byte header.
     Objects {
@@ -87,6 +87,23 @@ impl Layer2 {
         }
     }
 
+    /// Replaces one background tile and re-encodes the stream. Returns `None`
+    /// (unchanged) if this is not a background or `index` is out of range.
+    /// 8-bit tilemaps keep only the low byte of `tile`.
+    pub fn set_background_tile(&mut self, index: usize, tile: u16) -> Option<()> {
+        let Self::Background { rows_per_screen, tiles, compressed, .. } = self else {
+            return None;
+        };
+        *tiles.get_mut(index)? = tile;
+        let low: Vec<u8> = tiles.iter().map(|t| t.to_le_bytes()[0]).collect();
+        let mut decoded = low;
+        if *rows_per_screen == BG_ROWS_16BIT {
+            decoded.extend(tiles.iter().map(|t| t.to_le_bytes()[1]));
+        }
+        *compressed = encode_bg_rle(&decoded);
+        Some(())
+    }
+
     /// Background tile number at `index` in the decoded tilemap, page folded in.
     #[must_use]
     pub fn background_tile(&self, index: usize) -> Option<u16> {
@@ -95,6 +112,54 @@ impl Layer2 {
             Self::Objects { .. } => None,
         }
     }
+}
+
+/// Longest run one control byte can describe.
+const MAX_RUN: usize = 128;
+
+/// Encodes decoded tilemap bytes as a background RLE stream ending in `FF FF`.
+///
+/// Trailing fill bytes (`0x25`) are omitted because the game pre-fills the
+/// tilemap with them. Runs of three or more equal bytes become repeat
+/// commands, everything else literal runs; a repeat of 128 × `0xFF` would
+/// collide with the terminator and is capped at 127.
+#[must_use]
+pub fn encode_bg_rle(tilemap: &[u8]) -> Vec<u8> {
+    let end = tilemap.iter().rposition(|&b| b != BG_FILL).map_or(0, |i| i.saturating_add(1));
+    let data = tilemap.get(..end).unwrap_or(&[]);
+    let mut out = Vec::with_capacity(end.saturating_add(2));
+    let mut literal: Vec<u8> = Vec::new();
+    let mut pos = 0usize;
+    while let Some(&value) = data.get(pos) {
+        let max_run = if value == 0xFF { MAX_RUN.saturating_sub(1) } else { MAX_RUN };
+        let run = data
+            .get(pos..)
+            .map_or(0, |rest| rest.iter().take(max_run).take_while(|&&b| b == value).count());
+        if run >= 3 {
+            flush_literal(&mut out, &mut literal);
+            out.push(0x80 | u8::try_from(run.saturating_sub(1)).unwrap_or(0x7F));
+            out.push(value);
+            pos = pos.saturating_add(run);
+        } else {
+            literal.push(value);
+            if literal.len() == MAX_RUN {
+                flush_literal(&mut out, &mut literal);
+            }
+            pos = pos.saturating_add(1);
+        }
+    }
+    flush_literal(&mut out, &mut literal);
+    out.extend([0xFF, 0xFF]);
+    out
+}
+
+/// Emits a pending literal run (1 to 128 bytes).
+fn flush_literal(out: &mut Vec<u8>, literal: &mut Vec<u8>) {
+    if literal.is_empty() {
+        return;
+    }
+    out.push(u8::try_from(literal.len().saturating_sub(1)).unwrap_or(0x7F));
+    out.append(literal);
 }
 
 /// Decodes a background RLE stream into `max_len` bytes.
@@ -178,5 +243,67 @@ mod tests {
         assert_eq!(layer.background_tile(0), Some(0x0800), "low 0, high byte 8");
         assert_eq!(layer.background_tile(0x3FF), Some(0x0F07));
         assert!(matches!(layer, Layer2::Background { page_set: 2, rows_per_screen: 32, .. }));
+    }
+
+    #[test]
+    fn encoder_round_trips_and_handles_edge_cases() {
+        let mut map = [BG_FILL; super::BG_TILEMAP_LEN];
+        map[..7].copy_from_slice(&[0x10, 0x11, 0x12, 0x77, 0x77, 0x77, 0x77]);
+        let encoded = super::encode_bg_rle(&map);
+        assert_eq!(encoded, vec![0x02, 0x10, 0x11, 0x12, 0x83, 0x77, 0xFF, 0xFF]);
+        let (decoded, _) = decode_bg_rle(&encoded).expect("valid");
+        assert_eq!(*decoded, map);
+
+        // 130 × 0xFF must not produce a (FF, FF) control pair.
+        let mut ffs = [BG_FILL; super::BG_TILEMAP_LEN];
+        ffs[..130].fill(0xFF);
+        let ff_stream = super::encode_bg_rle(&ffs);
+        assert_eq!(ff_stream, vec![0xFE, 0xFF, 0x82, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(*decode_bg_rle(&ff_stream).expect("valid").0, ffs);
+
+        // Long literal runs split at 128; an all-fill map is just the terminator.
+        let mut lit = [BG_FILL; super::BG_TILEMAP_LEN];
+        for (i, b) in lit.iter_mut().take(200).enumerate() {
+            *b = u8::try_from(i & 0xFF).unwrap_or(0);
+        }
+        let lit_stream = super::encode_bg_rle(&lit);
+        assert_eq!(*decode_bg_rle(&lit_stream).expect("valid").0, lit);
+        assert_eq!(super::encode_bg_rle(&[BG_FILL; super::BG_TILEMAP_LEN]), vec![0xFF, 0xFF]);
+
+        let mut layer = Layer2::background_8bit(0, &map, vec![]);
+        assert_eq!(layer.set_background_tile(3, 0x20), Some(()));
+        assert_eq!(layer.background_tile(3), Some(0x20));
+        assert_eq!(layer.to_bytes(), vec![0x03, 0x10, 0x11, 0x12, 0x20, 0x82, 0x77, 0xFF, 0xFF]);
+        assert_eq!(layer.set_background_tile(0x400, 0), None);
+    }
+
+    /// Every vanilla background re-encodes no larger than it is stored.
+    #[test]
+    fn real_rom_backgrounds_reencode() {
+        let Some(path) = std::env::var_os("SMW_ROM") else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = crate::RomLayout::detect(&rom).expect("vanilla");
+        let mut checked = 0;
+        for id in crate::LevelId::all() {
+            let level = crate::level::Level::load(&rom, &layout, id).expect("loads");
+            let Layer2::Background { tiles, compressed, .. } = &level.layer2 else {
+                continue;
+            };
+            let low: Vec<u8> = tiles.iter().map(|t| t.to_le_bytes()[0]).collect();
+            let encoded = super::encode_bg_rle(&low);
+            let (decoded, _) = decode_bg_rle(&encoded).expect("valid");
+            assert_eq!(decoded.as_slice(), low.as_slice(), "level {id}");
+            assert!(
+                encoded.len() <= compressed.len(),
+                "level {id}: {} > {}",
+                encoded.len(),
+                compressed.len()
+            );
+            checked += 1;
+        }
+        assert!(checked > 50);
     }
 }

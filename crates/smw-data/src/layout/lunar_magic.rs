@@ -122,6 +122,7 @@ pub(super) fn detect(rom: &Rom, signature: String) -> Result<RomLayout, LayoutEr
     Ok(RomLayout {
         kind: LayoutKind::LunarMagic { major, minor },
         sprite_banks: Some(LM_25X.sprite_banks),
+        known_free: &[],
         lm: Some(LM_25X),
         ..VANILLA
     })

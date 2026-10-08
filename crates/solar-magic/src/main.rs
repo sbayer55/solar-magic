@@ -1,7 +1,8 @@
-//! Solar Magic: a Super Mario World level viewer built on egui.
+//! Solar Magic: a Super Mario World level editor built on egui.
 
 mod app;
 mod document;
+mod edit;
 mod ips_tool;
 mod panels;
 

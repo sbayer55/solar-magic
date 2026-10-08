@@ -9,7 +9,7 @@ use crate::{LevelId, RomLayout};
 ///
 /// Fields are decoded on demand from the raw bytes so the header always
 /// re-serializes exactly.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct PrimaryHeader {
     /// The header bytes as stored.
     pub raw: [u8; 5],
@@ -178,7 +178,7 @@ impl LevelMode {
 }
 
 /// The four secondary header bytes, one from each table.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct SecondaryHeader {
     /// Bytes from `$05:F000`, `$05:F200`, `$05:F400`, `$05:F600`.
     pub raw: [u8; 4],

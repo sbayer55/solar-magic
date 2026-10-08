@@ -1,12 +1,13 @@
 //! Running the game's level loader to obtain the Map16 tile grid of each
 //! layer. See `docs/formats/level-load-routine.md`.
 
-use smw_data::level::Level;
+use smw_data::level::{Layer2, Level};
 use smw_data::{LevelId, RomLayout};
 use snes_rom::{Rom, RomError, SnesAddr};
-use w65c816::{Cpu, CpuError};
+use w65c816::{Addr, Cpu, CpuError};
 
-use crate::emu::SnesBus;
+use crate::emu::{Overlay, SnesBus};
+use crate::ownership::{AttributedBus, Ownership};
 
 /// Rows of tiles per screen in a horizontal level.
 pub const HORIZONTAL_ROWS: usize = 27;
@@ -26,6 +27,14 @@ const SENTINEL: u32 = 0xFF_FFFF;
 /// Game mode value that makes the loader skip its sprite-system follow-up.
 const GAME_MODE_SKIP_SPRITES: u8 = 0x22;
 
+/// Scratch bus addresses the level's bytes are overlaid at. These banks are
+/// beyond any ROM the mapper can address, so the overlay shadows nothing.
+const OVERLAY_LAYER1: Addr = 0x60_8000;
+const OVERLAY_LAYER2: Addr = 0x61_8000;
+const OVERLAY_SPRITES: Addr = 0x62_8000;
+/// Background tilemaps must sit in bank `$0C`, on the half matching their page.
+const OVERLAY_BACKGROUND: [Addr; 2] = [0x0C_8000, 0x0C_E8FE];
+
 /// Which layer's tiles to read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Layer {
@@ -44,15 +53,18 @@ impl Layer {
     }
 }
 
-/// Map16 tile numbers for one layer of a level.
+/// A row-major grid of per-tile values in level tile coordinates.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct TileGrid {
+pub struct Grid<T> {
     width: usize,
     height: usize,
-    tiles: Vec<u16>,
+    cells: Vec<T>,
 }
 
-impl TileGrid {
+/// Map16 tile numbers for one layer of a level.
+pub type TileGrid = Grid<u16>;
+
+impl<T: Copy> Grid<T> {
     /// Width in tiles.
     #[must_use]
     pub const fn width(&self) -> usize {
@@ -65,19 +77,27 @@ impl TileGrid {
         self.height
     }
 
-    /// Tile at `(x, y)`.
+    /// Value at `(x, y)`.
     #[must_use]
-    pub fn get(&self, x: usize, y: usize) -> Option<u16> {
+    pub fn get(&self, x: usize, y: usize) -> Option<T> {
         if x >= self.width || y >= self.height {
             return None;
         }
-        self.tiles.get(y.saturating_mul(self.width).saturating_add(x)).copied()
+        self.cells.get(y.saturating_mul(self.width).saturating_add(x)).copied()
     }
 
+    /// All cells, row-major.
+    #[must_use]
+    pub fn cells(&self) -> &[T] {
+        &self.cells
+    }
+}
+
+impl TileGrid {
     /// All tiles, row-major.
     #[must_use]
     pub fn tiles(&self) -> &[u16] {
-        &self.tiles
+        &self.cells
     }
 }
 
@@ -97,6 +117,8 @@ pub struct LoadedLevel {
     pub background: Option<Vec<u16>>,
     /// Rows per screen of `background` (27, or 32 for Lunar Magic 16-bit tilemaps).
     pub background_rows: u8,
+    /// Which object stamped each tile.
+    pub ownership: Ownership,
     /// Instructions the loader executed.
     pub steps: u64,
 }
@@ -119,46 +141,91 @@ pub enum LoadError {
     BadTilePointer(u32, usize),
 }
 
-/// Loads a level by running the game's own loader in the interpreter.
+/// Loads a level from the ROM and runs the game's loader on it.
 ///
 /// # Errors
 ///
 /// See [`LoadError`].
 pub fn load_level(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<LoadedLevel, LoadError> {
-    let level = Level::load(rom, layout, id)?;
-    let vertical = level.header.level_mode().is_vertical(rom, layout)?;
-    let mut bus = SnesBus::new(rom);
-    let loader = &layout.loader;
-    bus.set_wram_u24(loader.ram_layer1_ptr, level.addresses.layer1.get());
-    bus.set_wram_u24(loader.ram_layer2_ptr, level.addresses.layer2_raw.get());
-    bus.set_wram_u24(loader.ram_sprite_ptr, level.addresses.sprites.get());
-    bus.set_wram(loader.ram_game_mode, GAME_MODE_SKIP_SPRITES);
-    bus.set_wram_u16(loader.ram_level_number, id.get());
-    bus.set_wram_u16(loader.ram_level_number_copy, id.get());
+    load_level_data(rom, layout, Level::load(rom, layout, id)?)
+}
 
+/// Runs the game's own loader on `level`'s current bytes.
+///
+/// The serialized level is overlaid on the bus at scratch addresses, so
+/// edited levels render without touching the ROM, and every tile-RAM write
+/// is attributed to the object whose bytes the loader last fetched.
+///
+/// # Errors
+///
+/// See [`LoadError`].
+pub fn load_level_data(
+    rom: &Rom,
+    layout: &RomLayout,
+    level: Level,
+) -> Result<LoadedLevel, LoadError> {
+    let vertical = level.vertical;
+    let loader = &layout.loader;
+    let mut inner = SnesBus::new(rom);
+    let layer1_bytes = level.layer1_bytes();
+    let layer2_bytes = level.layer2_bytes();
+    let lm_relocated = level.lm.is_some_and(|info| info.flags.relocated_tilemap());
+    let vanilla_bg_page = match &level.layer2 {
+        Layer2::Background { tiles, .. } => {
+            tiles.first().map_or(0, |t| usize::from(t.to_le_bytes()[1] & 1))
+        }
+        Layer2::Objects { .. } => 0,
+    };
+    let layer2_addr = match &level.layer2 {
+        Layer2::Objects { .. } => OVERLAY_LAYER2,
+        // Lunar Magic's relocated tilemaps are read from the ROM through its
+        // own flags table, so they are not overlaid.
+        Layer2::Background { .. } if lm_relocated => level.addresses.layer2_raw.get(),
+        Layer2::Background { .. } => {
+            OVERLAY_BACKGROUND.get(vanilla_bg_page).copied().unwrap_or(OVERLAY_BACKGROUND[0])
+        }
+    };
+    let layer2_ptr = match &level.layer2 {
+        Layer2::Objects { .. } => layer2_addr,
+        Layer2::Background { .. } if lm_relocated => layer2_addr,
+        // The game recognises vanilla backgrounds by the `$FF` bank byte.
+        Layer2::Background { .. } => 0xFF_0000 | (layer2_addr & 0xFFFF),
+    };
+    inner.add_overlay(Overlay { start: OVERLAY_LAYER1, bytes: layer1_bytes });
+    if !lm_relocated {
+        inner.add_overlay(Overlay { start: layer2_addr, bytes: layer2_bytes });
+    }
+    inner.add_overlay(Overlay { start: OVERLAY_SPRITES, bytes: level.sprite_bytes() });
+    inner.set_wram_u24(loader.ram_layer1_ptr, OVERLAY_LAYER1);
+    inner.set_wram_u24(loader.ram_layer2_ptr, layer2_ptr);
+    inner.set_wram_u24(loader.ram_sprite_ptr, OVERLAY_SPRITES);
+    inner.set_wram(loader.ram_game_mode, GAME_MODE_SKIP_SPRITES);
+    inner.set_wram_u16(loader.ram_level_number, level.id.get());
+    inner.set_wram_u16(loader.ram_level_number_copy, level.id.get());
+
+    let mut bus = AttributedBus::new(inner, &level, OVERLAY_LAYER1, layer2_addr);
     let mut cpu = Cpu::new();
     cpu.brk_is_fatal = true;
     cpu.call_long(&mut bus, loader.entry.get(), SENTINEL, STEP_BUDGET)?;
 
     let screens = usize::from(level.header.screens());
     let mode = level.header.level_mode().get();
-    let layer1 =
-        read_grid(rom, layout, &bus, GridShape { layer: Layer::One, mode, screens, vertical })?;
-    let (layer2, background, background_rows) = match level.layer2 {
-        smw_data::level::Layer2::Objects { .. } => (
-            Some(read_grid(
-                rom,
-                layout,
-                &bus,
-                GridShape { layer: Layer::Two, mode, screens, vertical },
-            )?),
+    let shape1 = GridShape { layer: Layer::One, mode, screens, vertical };
+    let shape2 = GridShape { layer: Layer::Two, mode, screens, vertical };
+    let layer1 = read_grid(rom, layout, bus.inner(), shape1)?;
+    let owners1 = read_cells(rom, layout, shape1, |lo, _| Some(bus.owner_at(Layer::One, lo)))?;
+    let (layer2, owners2, background, background_rows) = match level.layer2 {
+        Layer2::Objects { .. } => (
+            Some(read_grid(rom, layout, bus.inner(), shape2)?),
+            Some(read_cells(rom, layout, shape2, |lo, _| Some(bus.owner_at(Layer::Two, lo)))?),
             None,
             0,
         ),
-        smw_data::level::Layer2::Background { rows_per_screen, .. } => {
-            (None, Some(read_background(layout, &bus)), rows_per_screen)
+        Layer2::Background { rows_per_screen, .. } => {
+            (None, None, Some(read_background(layout, bus.inner())), rows_per_screen)
         }
     };
+    let ownership = Ownership::new(owners1, owners2);
     Ok(LoadedLevel {
         level,
         vertical,
@@ -166,6 +233,7 @@ pub fn load_level(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<LoadedLe
         layer2,
         background,
         background_rows,
+        ownership,
         steps: cpu.steps,
     })
 }
@@ -203,28 +271,37 @@ fn read_grid(
     bus: &SnesBus<'_>,
     shape: GridShape,
 ) -> Result<TileGrid, LoadError> {
+    read_cells(rom, layout, shape, |lo, hi| {
+        Some(u16::from_le_bytes([bus.wram_at(lo)?, bus.wram_at(hi)?]))
+    })
+}
+
+/// Builds a grid by asking `source` for the value behind each cell's tile-RAM
+/// low and high byte addresses.
+fn read_cells<T: Copy + Default>(
+    rom: &Rom,
+    layout: &RomLayout,
+    shape: GridShape,
+    source: impl Fn(u32, u32) -> Option<T>,
+) -> Result<Grid<T>, LoadError> {
     let (rows, cols) = shape.screen_dims();
     let (width, height) = shape.grid_dims();
-    let mut tiles = vec![0u16; width.saturating_mul(height)];
+    let mut cells = vec![T::default(); width.saturating_mul(height)];
     let low_ptrs = screen_pointers(rom, layout.loader.tile_ram_ptrs_low, shape)?;
     let high_ptrs = screen_pointers(rom, layout.loader.tile_ram_ptrs_high, shape)?;
     for (screen, (lo_base, hi_base)) in low_ptrs.iter().zip(high_ptrs.iter()).enumerate() {
         for row in 0..rows {
             for col in 0..cols {
                 let (x, y, offset) = cell_position(shape.vertical, screen, row, col);
-                let lo = bus
-                    .wram_at(lo_base.wrapping_add(offset))
+                let value = source(lo_base.wrapping_add(offset), hi_base.wrapping_add(offset))
                     .ok_or(LoadError::BadTilePointer(*lo_base, screen))?;
-                let hi = bus
-                    .wram_at(hi_base.wrapping_add(offset))
-                    .ok_or(LoadError::BadTilePointer(*hi_base, screen))?;
-                if let Some(slot) = tiles.get_mut(y.saturating_mul(width).saturating_add(x)) {
-                    *slot = u16::from_le_bytes([lo, hi]);
+                if let Some(slot) = cells.get_mut(y.saturating_mul(width).saturating_add(x)) {
+                    *slot = value;
                 }
             }
         }
     }
-    Ok(TileGrid { width, height, tiles })
+    Ok(Grid { width, height, cells })
 }
 
 /// Grid position and RAM offset (from the screen's base pointer) of one cell.
@@ -248,13 +325,19 @@ fn cell_position(vertical: bool, screen: usize, row: usize, col: usize) -> (usiz
     }
 }
 
-/// The per-screen 24-bit RAM pointers for `layer` in level `mode`.
+/// The per-screen 24-bit RAM pointers for `layer` in level `mode`. Modes
+/// without tile RAM (boss rooms: the game's table holds `$0000`) yield no
+/// pointers, so their grids come out blank.
 fn screen_pointers(rom: &Rom, table: SnesAddr, shape: GridShape) -> Result<Vec<u32>, LoadError> {
     let bank = table.bank();
     let layer_table = rom.read_u16_le(offset(table, shape.layer.index().saturating_mul(2))?)?;
     let mode_entry =
         offset(SnesAddr::from_parts(bank, layer_table), u32::from(shape.mode).saturating_mul(2))?;
-    let screen_table = SnesAddr::from_parts(bank, rom.read_u16_le(mode_entry)?);
+    let screen_table_offset = rom.read_u16_le(mode_entry)?;
+    if screen_table_offset == 0 {
+        return Ok(Vec::new());
+    }
+    let screen_table = SnesAddr::from_parts(bank, screen_table_offset);
     (0..shape.screens)
         .map(|s| {
             let entry = offset(screen_table, u32::try_from(s).unwrap_or(0).saturating_mul(3))?;
@@ -312,5 +395,25 @@ mod tests {
         assert!(bottom.iter().any(|&t| t != 0x25), "expected ground tiles, got {bottom:X?}");
         assert!(loaded.background.is_some());
         eprintln!("steps: {}", loaded.steps);
+    }
+
+    /// Loading through the overlay path gives the same grids as the ROM for a
+    /// spread of levels (every 13th slot covers all level modes).
+    #[test]
+    fn real_rom_overlay_path_matches_rom_path() {
+        let Some(path) = std::env::var_os("SMW_ROM") else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = smw_data::RomLayout::detect(&rom).expect("vanilla");
+        for id in smw_data::LevelId::all().step_by(13) {
+            let level = smw_data::level::Level::load(&rom, &layout, id).expect("parses");
+            let direct = super::load_level(&rom, &layout, id).expect("loads");
+            let via_bytes = super::load_level_data(&rom, &layout, level).expect("loads");
+            assert_eq!(direct.layer1, via_bytes.layer1, "level {id} layer 1");
+            assert_eq!(direct.layer2, via_bytes.layer2, "level {id} layer 2");
+            assert_eq!(direct.background, via_bytes.background, "level {id} background");
+        }
     }
 }

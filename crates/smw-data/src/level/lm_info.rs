@@ -11,7 +11,9 @@ const NO_PALETTE: u32 = 0;
 const UNWRITTEN: u32 = 0xFF_FFFF;
 
 /// A level's layer 2 flags byte (table `level_flags`, copied to `$7F:C00B`).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct LmLevelFlags(pub u8);
 
 impl LmLevelFlags {
@@ -37,7 +39,7 @@ impl LmLevelFlags {
 }
 
 /// What Lunar Magic records about a level outside its data streams.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct LmLevelInfo {
     /// Layer 2 flags.
     pub flags: LmLevelFlags,

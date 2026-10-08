@@ -26,6 +26,11 @@ terminator    a byte 0xFF where the next sprite's first byte would be
 Screen number = `s<<4 | ssss` (0–31). The game loads a sprite when its screen
 equals the scroll boundary and its X matches the column being revealed.
 
-Vertical levels swap the roles of the X/screen fields (handled by the loader
-via `ScreenMode`); Solar Magic stores the raw fields and interprets them at
-render time.
+## Vertical levels (verified in SMWDisX `CODE_02A93C`, 2026-10-07)
+
+The loader swaps the roles of the two position fields exactly as it does for
+objects: `YYYY` plus the `y` bit hold the X tile (0–31 across the 32-wide
+screen; the `y` bit is X bit 4), the screen bits hold the vertical screen
+number, and `XXXX` holds the Y tile within the 16-row screen. The extra bits
+stay in bits 2–3 of byte 0. `Sprite::position` / `Sprite::with_position` in
+`crates/smw-data/src/level/edit.rs` implement both orientations.

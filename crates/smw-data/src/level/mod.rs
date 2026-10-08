@@ -4,20 +4,30 @@
 //! ([`Level::layer1_bytes`] and friends), which is both the round-trip test
 //! and the basis for writing levels back later.
 
+mod edit;
+mod exits;
+pub mod fields;
 mod header;
 mod layer2;
 mod lm_info;
 pub mod lm_objects;
 mod objects;
+mod save;
+mod screens;
 mod sprites;
 
+pub use edit::{EditError, Layer, ObjectSpec, ScreenExitInfo, SpriteSpec, entrance_pixel};
+pub use exits::{ExitId, SecondaryExit};
+pub use fields::{BitField, FieldError};
 pub use header::{LevelMode, PrimaryHeader, SecondaryHeader};
 pub use layer2::{
     BG_ROWS, BG_ROWS_16BIT, BG_TILEMAP_LEN, BG_TILEMAP_LEN_16BIT, BgTilemap, DecodedBackground,
-    Layer2, decode_bg_rle, decode_bg_rle_capped,
+    Layer2, decode_bg_rle, decode_bg_rle_capped, encode_bg_rle,
 };
 pub use lm_info::{LmLevelFlags, LmLevelInfo};
 pub use objects::{MAX_OBJECT_LEN, ObjectFormat, ObjectKind, ObjectStream, RawObject};
+pub use save::{Placement, SaveError, SaveOptions, SaveReport, pointer_refs, save_level};
+pub use screens::{SCREEN_TILES, TilePos, join_position, split_position};
 pub use sprites::{Sprite, SpriteList};
 
 use snes_rom::{Rom, RomError, SnesAddr};
@@ -31,7 +41,7 @@ const LAYER2_BACKGROUND_BANK: u8 = 0xFF;
 const LAYER2_BACKGROUND_REAL_BANK: u8 = 0x0C;
 
 /// A fully parsed level.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Level {
     /// Which level this is.
     pub id: LevelId,
@@ -41,6 +51,10 @@ pub struct Level {
     pub header: PrimaryHeader,
     /// The 4 secondary header bytes.
     pub secondary: SecondaryHeader,
+    /// Whether the level mode is vertical (from the ROM's mode table).
+    pub vertical: bool,
+    /// How objects are encoded (new objects are built in this format).
+    pub format: ObjectFormat,
     /// Layer 1 objects.
     pub layer1: ObjectStream,
     /// Layer 2 objects or background.
@@ -52,7 +66,7 @@ pub struct Level {
 }
 
 /// Source addresses of a level's parts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct LevelAddresses {
     /// Layer 1 data (header + objects).
     pub layer1: SnesAddr,
@@ -62,6 +76,37 @@ pub struct LevelAddresses {
     pub layer2: SnesAddr,
     /// Sprite data.
     pub sprites: SnesAddr,
+}
+
+impl LevelAddresses {
+    /// Reads a level's three pointers from the tables. `layer2` is the
+    /// address actually read (bank `$0C` for vanilla backgrounds).
+    ///
+    /// # Errors
+    ///
+    /// ROM read failures.
+    pub fn load(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<Self, RomError> {
+        let index = u32::from(id.get());
+        let layer1 = rom.read_ptr(offset(layout.layer1_ptrs, index.saturating_mul(3))?)?;
+        let layer2_raw = rom.read_ptr(offset(layout.layer2_ptrs, index.saturating_mul(3))?)?;
+        let sprite_offset =
+            rom.read_u16_le(offset(layout.sprite_ptrs, index.saturating_mul(2))?)?;
+        let sprite_bank = match layout.sprite_banks {
+            Some(table) => rom.read_u8(offset(table, index)?)?,
+            None => layout.sprite_bank,
+        };
+        let layer2 = if layer2_raw.bank() == LAYER2_BACKGROUND_BANK {
+            SnesAddr::from_parts(LAYER2_BACKGROUND_REAL_BANK, layer2_raw.offset())
+        } else {
+            layer2_raw
+        };
+        Ok(Self {
+            layer1,
+            layer2_raw,
+            layer2,
+            sprites: SnesAddr::from_parts(sprite_bank, sprite_offset),
+        })
+    }
 }
 
 /// Errors from loading a level.
@@ -111,16 +156,10 @@ impl Level {
     ///
     /// See [`LevelError`].
     pub fn load(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<Self, LevelError> {
-        let index = u32::try_from(id.index()).unwrap_or(0);
-        let layer1_addr = rom.read_ptr(offset(layout.layer1_ptrs, index.saturating_mul(3))?)?;
-        let layer2_raw = rom.read_ptr(offset(layout.layer2_ptrs, index.saturating_mul(3))?)?;
-        let sprite_offset =
-            rom.read_u16_le(offset(layout.sprite_ptrs, index.saturating_mul(2))?)?;
-        let sprite_bank = match layout.sprite_banks {
-            Some(table) => rom.read_u8(offset(table, index)?)?,
-            None => layout.sprite_bank,
-        };
-        let sprites_addr = SnesAddr::from_parts(sprite_bank, sprite_offset);
+        let pointers = LevelAddresses::load(rom, layout, id)?;
+        let layer1_addr = pointers.layer1;
+        let layer2_raw = pointers.layer2_raw;
+        let sprites_addr = pointers.sprites;
 
         let format = layout.object_format();
         let layer1_data = tail(rom, layer1_addr)?;
@@ -134,6 +173,7 @@ impl Level {
                 })?;
 
         let secondary = SecondaryHeader::load(rom, layout, id)?;
+        let vertical = header.level_mode().is_vertical(rom, layout)?;
         let lm = LmLevelInfo::load(rom, layout, id)?;
         let flags = lm.map(|info| info.flags).unwrap_or_default();
 
@@ -165,6 +205,8 @@ impl Level {
             },
             header,
             secondary,
+            vertical,
+            format,
             layer1,
             layer2,
             sprites,

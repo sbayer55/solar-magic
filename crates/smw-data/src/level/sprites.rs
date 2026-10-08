@@ -4,7 +4,7 @@
 const TERMINATOR: u8 = 0xFF;
 
 /// One sprite entry as stored.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct Sprite {
     /// `YYYYEEsy`, `XXXXssss`, sprite number.
     pub bytes: [u8; 3],
@@ -49,7 +49,7 @@ impl Sprite {
 }
 
 /// A level's sprite data.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct SpriteList {
     /// Header byte: bits 0–5 sprite memory, bits 6–7 buoyancy.
     pub header: u8,

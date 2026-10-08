@@ -3720,6 +3720,7 @@ name = "smw-data"
 version = "0.1.0"
 dependencies = [
  "lc-lz2",
+ "serde",
  "snes-rom",
  "thiserror 2.0.21",
 ]
@@ -3738,6 +3739,7 @@ dependencies = [
 name = "snes-rom"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "thiserror 2.0.21",
 ]
 
@@ -3749,6 +3751,8 @@ dependencies = [
  "clap",
  "image",
  "ips",
+ "lc-lz2",
+ "serde_json",
  "smw-data",
  "smw-render",
  "snes-rom",

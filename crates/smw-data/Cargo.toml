@@ -10,6 +10,7 @@ authors.workspace = true
 
 [dependencies]
 lc-lz2.workspace = true
+serde.workspace = true
 snes-rom.workspace = true
 thiserror.workspace = true
 

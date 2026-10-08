@@ -13,6 +13,12 @@ Implemented in `crates/smw-data/src/level/header.rs`. Decoder in the game:
 
 Verified: level 0's layer 1 pointer is `$06:8654`.
 
+Writing (`crates/smw-data/src/level/save.rs`): the three entries are rewritten
+when a part moves; a background keeps bank `$FF` in its layer 2 entry; the
+sprite entry stores only the offset unless the ROM has Lunar Magic's bank
+table. Several vanilla levels share one data block through identical
+pointers, so a save checks `pointer_refs` before writing in place or freeing.
+
 ## Primary header (5 bytes at the start of layer 1 data)
 
 | Byte | Bits | Field | Notes |
@@ -55,7 +61,22 @@ Four byte tables indexed by level number (decoded around `$05:D8B7`):
 
 Implemented in `crates/smw-data/src/level/header.rs` (`SecondaryHeader`).
 
-Secondary *exits* use four more 512-entry tables: `$05:F800` (destination
-level low), `$05:FA00`, `$05:FC00`, `$05:FE00` (positions and entrance type).
+## Secondary exits
 
-Lunar Magic adds further bytes at `$05:DE00`, `$06:FC00`, `$06:FE00`.
+Four 512-entry byte tables indexed by secondary exit number (0x000–0x1FF).
+Decoded by the game at `$05:D7D5`–`$05:D83B` (the `UseSecondaryExit` branch
+of the level-entry routine); verified against the SMWDisX disassembly
+2026-10-07. Implemented in `crates/smw-data/src/level/exits.rs`.
+
+| Table | Bits | Field | Notes |
+|---|---|---|---|
+| `$05:F800` | 0–7 | destination level, low byte | the high bit comes from the current submap in vanilla (`$0F` = 1 when not on the main map); Lunar Magic stores it elsewhere |
+| `$05:FA00` | 0–3 | entrance Y position index | `DATA_05D730` / `DATA_05D740`, same as the main entrance |
+| `$05:FA00` | 4–5 | initial layer 1 Y | `DATA_05D708` |
+| `$05:FA00` | 6–7 | initial layer 2 Y | `DATA_05D70C` |
+| `$05:FC00` | 0–4 | entrance screen | |
+| `$05:FC00` | 5–7 | entrance X position index | `DATA_05D750` / `DATA_05D758` |
+| `$05:FE00` | 0–2 | entrance type | as the main entrance |
+| `$05:FE00` | 3–7 | unused in vanilla | Lunar Magic uses them (slippery/water flags, `$05:DD00`) |
+
+Lunar Magic adds further header bytes at `$05:DE00`, `$06:FC00`, `$06:FE00`.

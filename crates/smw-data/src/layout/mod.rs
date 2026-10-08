@@ -13,7 +13,7 @@ use core::fmt;
 use snes_rom::{Rom, SnesAddr};
 
 pub use lunar_magic::{LM_25X, LunarMagicTables};
-pub use vanilla::VANILLA;
+pub use vanilla::{VANILLA, VANILLA_FREE_RANGES};
 
 use crate::LayoutError;
 use crate::level::ObjectFormat;
@@ -142,6 +142,55 @@ pub struct LevelLoader {
     pub ram_bg_tilemap_high: u32,
 }
 
+/// The player entrance position tables (`docs/formats/level-header.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntranceTables {
+    /// 16 low bytes of the entrance Y pixel, indexed by the Y position index.
+    pub y_low: SnesAddr,
+    /// 16 high bytes of the entrance Y pixel.
+    pub y_high: SnesAddr,
+    /// 8 low bytes of the entrance X pixel, indexed by the X position index.
+    pub x_low: SnesAddr,
+    /// 8 high bytes of the entrance X pixel.
+    pub x_high: SnesAddr,
+}
+
+/// A range of file offsets known to hold nothing (all `0xFF` in vanilla).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FreeRange {
+    /// First unused file offset.
+    pub pc: usize,
+    /// Number of unused bytes.
+    pub len: usize,
+}
+
+impl FreeRange {
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "const table constructor; every range below has end >= start"
+    )]
+    pub(super) const fn new(start: usize, end_inclusive: usize) -> Self {
+        Self { pc: start, len: end_inclusive - start + 1 }
+    }
+
+    /// File offset one past the range.
+    #[must_use]
+    pub const fn end_pc(self) -> usize {
+        self.pc.saturating_add(self.len)
+    }
+
+    /// LoROM bank the range starts in.
+    #[must_use]
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        reason = "masked to 8 bits before the cast"
+    )]
+    pub const fn bank(self) -> u8 {
+        ((self.pc >> 15) & 0xFF) as u8
+    }
+}
+
 /// Resolved table locations for one ROM.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RomLayout {
@@ -171,6 +220,10 @@ pub struct RomLayout {
     /// `docs/formats/level-header.md`
     pub secondary_header: [SnesAddr; 4],
 
+    /// Four 512-entry byte tables holding the secondary exits.
+    /// `docs/formats/level-header.md`
+    pub secondary_exits: [SnesAddr; 4],
+
     /// Pointers to the LC_LZ2-compressed GFX00-GFX31 files (three parallel
     /// 50-byte tables). `docs/formats/gfx.md`
     pub gfx_ptrs: SplitPointerTable,
@@ -194,6 +247,19 @@ pub struct RomLayout {
 
     /// The level loader and its RAM. `docs/formats/level-load-routine.md`
     pub loader: LevelLoader,
+
+    /// Player entrance position tables.
+    pub entrance: EntranceTables,
+
+    /// First file offset of expanded space: everything from here up is free
+    /// unless a RATS tag claims it. `docs/formats/rats.md`
+    pub expanded_start_pc: usize,
+
+    /// Byte ranges inside the original image known to be unused. These are
+    /// the only places a vanilla-safe save may allocate below
+    /// `expanded_start_pc` (sprite data must stay in bank `$07`). Empty for
+    /// Lunar Magic ROMs, which may have used them.
+    pub known_free: &'static [FreeRange],
 
     /// Lunar Magic's added tables, when the ROM was saved by a supported
     /// Lunar Magic version. `docs/formats/lunar-magic-ext.md`

@@ -4,15 +4,16 @@
 use std::collections::HashMap;
 
 use smw_data::gfx::{GfxError, GfxFile, GfxId};
+use smw_data::level::Level;
 use smw_data::map16::{self, Map16Set, Map16Tile};
 use smw_data::palette::{Palette, level_palette};
 use smw_data::tileset::{LevelGfxSlots, level_gfx_slots};
 use smw_data::{LevelId, RomLayout};
 use snes_rom::Rom;
 
-use crate::level::{LoadError, LoadedLevel, TileGrid, load_level};
+use crate::level::{LoadError, LoadedLevel, TileGrid, load_level_data};
 use crate::map16_ext::{FIRST_EXT_TILE, FgPageResolver};
-use crate::{CharAtlas, Raster, TileContext, draw_map16_tile};
+use crate::{CharAtlas, Raster, Rect, TileContext, draw_map16_tile};
 
 /// What to include in the picture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -23,11 +24,13 @@ pub struct RenderOptions {
     pub layer2: bool,
     /// Draw sprite position markers.
     pub sprites: bool,
+    /// Tint every layer 1 tile by the object that owns it (debug view).
+    pub owners: bool,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
-        Self { layer1: true, layer2: true, sprites: false }
+        Self { layer1: true, layer2: true, sprites: false, owners: false }
     }
 }
 
@@ -75,6 +78,9 @@ pub enum SceneError {
     /// Loading the level failed.
     #[error(transparent)]
     Load(#[from] LoadError),
+    /// Parsing the level failed.
+    #[error(transparent)]
+    Level(#[from] smw_data::level::LevelError),
     /// Graphics could not be decoded.
     #[error(transparent)]
     Gfx(#[from] GfxError),
@@ -96,7 +102,18 @@ impl LevelScene {
     ///
     /// See [`SceneError`].
     pub fn load(rom: &Rom, layout: &RomLayout, id: LevelId) -> Result<Self, SceneError> {
-        let loaded = load_level(rom, layout, id)?;
+        Self::from_level(rom, layout, Level::load(rom, layout, id)?)
+    }
+
+    /// Builds the scene for a level value, which need not match the ROM:
+    /// this is how edits are previewed.
+    ///
+    /// # Errors
+    ///
+    /// See [`SceneError`].
+    pub fn from_level(rom: &Rom, layout: &RomLayout, level: Level) -> Result<Self, SceneError> {
+        let id = level.id;
+        let loaded = load_level_data(rom, layout, level)?;
         let header = &loaded.level.header;
         let palette = level_palette(rom, layout, &loaded.level)?;
         let gfx_slots = level_gfx_slots(rom, layout, id, *header)?;
@@ -133,6 +150,9 @@ impl LevelScene {
         if options.layer1 {
             draw_grid(&mut raster, &self.loaded.layer1, self.map16(), ctx);
         }
+        if options.owners {
+            self.tint_owners(&mut raster);
+        }
         if options.sprites {
             crate::sprites::draw_sprite_markers(
                 &mut raster,
@@ -141,6 +161,25 @@ impl LevelScene {
             );
         }
         raster
+    }
+
+    /// Blends a per-object colour over every owned layer 1 tile.
+    fn tint_owners(&self, raster: &mut Raster) {
+        let owners = &self.loaded.ownership.layer1;
+        for y in 0..owners.height() {
+            for x in 0..owners.width() {
+                let Some(index) = owners.get(x, y).flatten() else {
+                    continue;
+                };
+                let rect = Rect {
+                    x: to_u32(x).saturating_mul(16),
+                    y: to_u32(y).saturating_mul(16),
+                    w: 16,
+                    h: 16,
+                };
+                raster.blend_rect(rect, owner_color(index));
+            }
+        }
     }
 
     /// The foreground Map16 lookup for this level.
@@ -291,6 +330,14 @@ pub fn load_slot_atlas(
         files[2].as_ref(),
         files[3].as_ref(),
     ]))
+}
+
+/// A stable, distinct-looking colour per object index (half transparent).
+#[must_use]
+pub const fn owner_color(index: u16) -> crate::Rgba8 {
+    let hue = index.wrapping_mul(0x9E37);
+    let [r, g] = hue.to_le_bytes();
+    [r | 0x40, g | 0x40, index.wrapping_mul(53).to_le_bytes()[0] | 0x40, 0x80]
 }
 
 fn to_u32(v: usize) -> u32 {

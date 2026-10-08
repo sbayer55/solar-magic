@@ -22,5 +22,5 @@ pub mod test_fixtures;
 pub use addr::SnesAddr;
 pub use error::RomError;
 pub use header::{InternalHeader, MapKind};
-pub use mapper::{LoRom, Mapper};
+pub use mapper::{LoRom, Mapper, MapperKind};
 pub use rom::Rom;

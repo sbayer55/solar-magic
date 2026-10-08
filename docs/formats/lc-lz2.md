@@ -1,8 +1,8 @@
 # LC_LZ2
 
-Planned for `crates/lc-lz2` (M1). The format Lunar Compress calls LC_LZ2 is
-what SMW uses for its GFX files. Decompression routine in vanilla: `$00:B8DE`,
-output buffer `$7E:AD00`.
+Implemented in `crates/lc-lz2` (`decompress.rs`, `compress.rs`). The format
+Lunar Compress calls LC_LZ2 is what SMW uses for its GFX files. Decompression
+routine in vanilla: `$00:B8DE`, output buffer `$7E:AD00`.
 
 Each chunk starts with a header byte `CCCLLLLL`:
 
@@ -18,5 +18,13 @@ Each chunk starts with a header byte `CCCLLLLL`:
 
 A header byte of `$FF` terminates the stream.
 
-Status: spec recorded from sneslab.net; to be verified against GFX00 on
-implementation (expected decompressed size 0x1800 bytes for a 3bpp 128-tile file).
+Verified 2026-10-06: all 50 vanilla GFX files (GFX00–GFX31) decode; 3bpp
+files decompress to 0xC00 bytes (128 tiles × 24 bytes), 4bpp to 0x1000, 2bpp
+to 0x400/0x800. The two unassigned commands are rejected.
+
+The encoder (`compress`) is greedy: at each position it takes the longest of
+byte fill, word fill, increasing fill or repeat when that is cheaper than
+copying the bytes directly, and otherwise extends a direct-copy run (split at
+1024 bytes). Repeats search the whole 64 KiB window and may overlap the
+write position. `solar gfx check` confirms every vanilla file re-encodes to
+no more than its stored size and decodes identically.

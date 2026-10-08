@@ -11,7 +11,11 @@
 //! 8       n     the protected data
 //! ```
 //!
-//! See `docs/formats/rats.md`.
+//! See `docs/formats/rats.md`. Allocation lives in [`alloc`].
+
+mod alloc;
+
+pub use alloc::{AllocRequest, FreeRun, RatsError, alloc, find, free, free_runs, tag_before};
 
 /// Length of a RATS tag header in bytes.
 pub const TAG_LEN: usize = 8;
@@ -20,7 +24,7 @@ pub const TAG_LEN: usize = 8;
 pub const MAGIC: &[u8; 4] = b"STAR";
 
 /// A located RATS tag.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RatsTag {
     /// File offset of the `STAR` magic.
     pub tag_pc: usize,
@@ -31,6 +35,22 @@ pub struct RatsTag {
 }
 
 impl RatsTag {
+    /// Largest number of data bytes one tag can protect.
+    pub const MAX_DATA_LEN: usize = 0x1_0000;
+
+    /// The 8 header bytes for a tag protecting `data_len` bytes
+    /// (1 to [`RatsTag::MAX_DATA_LEN`]).
+    #[must_use]
+    pub fn header_bytes(data_len: usize) -> Option<[u8; TAG_LEN]> {
+        if data_len == 0 || data_len > Self::MAX_DATA_LEN {
+            return None;
+        }
+        let size = u16::try_from(data_len.saturating_sub(1)).ok()?;
+        let [s0, s1] = size.to_le_bytes();
+        let [i0, i1] = (!size).to_le_bytes();
+        Some([MAGIC[0], MAGIC[1], MAGIC[2], MAGIC[3], s0, s1, i0, i1])
+    }
+
     /// File offset one past the last protected byte.
     #[must_use]
     pub const fn end_pc(&self) -> usize {

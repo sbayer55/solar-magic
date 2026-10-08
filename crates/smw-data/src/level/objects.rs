@@ -10,7 +10,9 @@ const TERMINATOR: u8 = 0xFF;
 pub const MAX_OBJECT_LEN: usize = 8;
 
 /// How objects are encoded: vanilla, or with Lunar Magic's additions.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub enum ObjectFormat {
     /// Vanilla: 3 bytes, or 4 for a screen exit.
     #[default]
@@ -21,7 +23,7 @@ pub enum ObjectFormat {
 }
 
 /// One object exactly as stored plus the screen it resolves to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RawObject {
     /// The object's bytes; only the first `len` are meaningful.
     pub bytes: [u8; MAX_OBJECT_LEN],
@@ -178,7 +180,7 @@ fn object_len(format: ObjectFormat, b0: u8, b1: u8, b2: u8, b3: Option<u8>) -> O
 }
 
 /// A parsed object stream (without the level header).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ObjectStream {
     /// Objects in file order.
     pub objects: Vec<RawObject>,
