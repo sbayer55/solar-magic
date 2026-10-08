@@ -6,8 +6,10 @@
 //! a header byte of `0xFF`. See `docs/formats/lc-lz2.md` for the table of
 //! commands.
 
+mod compress;
 mod decompress;
 
+pub use compress::compress;
 pub use decompress::{Decompressed, MAX_OUTPUT, decompress, decompress_with_limit};
 
 /// Errors from decoding an LC_LZ2 stream.

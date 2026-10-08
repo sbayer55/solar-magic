@@ -102,6 +102,31 @@ impl Raster {
         }
     }
 
+    /// Blends `color` over a rectangle using its alpha, clipped to the raster.
+    pub fn blend_rect(&mut self, rect: Rect, color: Rgba8) {
+        let alpha = u16::from(color[3]);
+        for yy in rect.y..rect.y.saturating_add(rect.h).min(self.height) {
+            for xx in rect.x..rect.x.saturating_add(rect.w).min(self.width) {
+                let Some(under) = self.get(xx, yy) else {
+                    continue;
+                };
+                let mix = |u: u8, c: u8| {
+                    let v = u16::from(u)
+                        .saturating_mul(255u16.saturating_sub(alpha))
+                        .saturating_add(u16::from(c).saturating_mul(alpha));
+                    u8::try_from(v / 255).unwrap_or(u8::MAX)
+                };
+                let out = [
+                    mix(under[0], color[0]),
+                    mix(under[1], color[1]),
+                    mix(under[2], color[2]),
+                    under[3].max(color[3]),
+                ];
+                self.put(xx, yy, out);
+            }
+        }
+    }
+
     /// Returns a copy scaled up by an integer factor (nearest neighbour).
     #[must_use]
     pub fn scaled(&self, factor: u32) -> Self {
@@ -134,6 +159,14 @@ mod tests {
         assert_eq!(r.get(4, 0), None);
         assert_eq!(r.pixels().len(), 12);
         assert_eq!(r.to_rgba_bytes().len(), 48);
+    }
+
+    #[test]
+    fn blending() {
+        let mut r = Raster::filled(2, 1, [0, 0, 0, 255]);
+        r.blend_rect(super::Rect { x: 0, y: 0, w: 1, h: 1 }, [255, 255, 255, 128]);
+        assert_eq!(r.get(0, 0), Some([128, 128, 128, 255]));
+        assert_eq!(r.get(1, 0), Some([0, 0, 0, 255]));
     }
 
     #[test]

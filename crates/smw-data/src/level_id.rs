@@ -7,7 +7,10 @@ use core::fmt;
 /// SMW has 512 level slots. Levels `0x000-0x024` and `0x101-0x13B` are the
 /// "main" slots entered from the overworld; `0x025-0x100` and `0x13C-0x1FF`
 /// are sublevels reached through exits.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(try_from = "u16", into = "u16")]
 pub struct LevelId(u16);
 
 impl LevelId {
@@ -50,6 +53,12 @@ impl fmt::Debug for LevelId {
 impl fmt::Display for LevelId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:03X}", self.0)
+    }
+}
+
+impl From<LevelId> for u16 {
+    fn from(id: LevelId) -> Self {
+        id.0
     }
 }
 

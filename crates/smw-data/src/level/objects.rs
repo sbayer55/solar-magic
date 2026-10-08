@@ -4,7 +4,7 @@
 const TERMINATOR: u8 = 0xFF;
 
 /// One object exactly as stored (3 or 4 bytes) plus the screen it resolves to.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct RawObject {
     /// The object's bytes; only the first `len` are meaningful.
     pub bytes: [u8; 4],
@@ -105,7 +105,7 @@ impl RawObject {
 }
 
 /// A parsed object stream (without the level header).
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
 pub struct ObjectStream {
     /// Objects in file order.
     pub objects: Vec<RawObject>,

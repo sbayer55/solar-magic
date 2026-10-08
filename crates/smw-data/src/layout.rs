@@ -111,6 +111,110 @@ pub struct LevelLoader {
     pub ram_bg_tilemap_high: u32,
 }
 
+/// A range of file offsets known to hold nothing (all `0xFF` in vanilla).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FreeRange {
+    /// First unused file offset.
+    pub pc: usize,
+    /// Number of unused bytes.
+    pub len: usize,
+}
+
+impl FreeRange {
+    #[allow(
+        clippy::arithmetic_side_effects,
+        reason = "const table constructor; every range below has end >= start"
+    )]
+    const fn new(start: usize, end_inclusive: usize) -> Self {
+        Self { pc: start, len: end_inclusive - start + 1 }
+    }
+
+    /// File offset one past the range.
+    #[must_use]
+    pub const fn end_pc(self) -> usize {
+        self.pc.saturating_add(self.len)
+    }
+
+    /// LoROM bank the range starts in.
+    #[must_use]
+    #[allow(
+        clippy::as_conversions,
+        clippy::cast_possible_truncation,
+        reason = "masked to 8 bits before the cast"
+    )]
+    pub const fn bank(self) -> u8 {
+        ((self.pc >> 15) & 0xFF) as u8
+    }
+}
+
+/// Unused byte ranges in the vanilla USA ROM, as file offsets.
+///
+/// Taken from the SMWDisX file `freespace.txt` (which lists SNES addresses); every
+/// range was verified all-`0xFF` against the ROM on 2026-10-07. See
+/// `docs/formats/rats.md`.
+pub const VANILLA_FREE_RANGES: [FreeRange; 47] = [
+    FreeRange::new(0x00_3091, 0x00_309F), // $00:B091-B09F (freespace.txt lists B091; only this part is 0xFF)
+    FreeRange::new(0x00_3A4D, 0x00_3A5F), // $00:BA4D-BA5F
+    FreeRange::new(0x00_4453, 0x00_445F), // $00:C453-C45F
+    FreeRange::new(0x00_79F5, 0x00_7A0F), // $00:F9F5-FA0F
+    FreeRange::new(0x00_7F93, 0x00_7FBF), // $00:FF93-FFBF
+    FreeRange::new(0x00_AD54, 0x00_AD58), // $01:AD54-AD58
+    FreeRange::new(0x00_CD1E, 0x00_CD29), // $01:CD1E-CD29
+    FreeRange::new(0x00_E2B0, 0x00_E2C7), // $01:E2B0-E2C7
+    FreeRange::new(0x00_FFBF, 0x00_FFFF), // $01:FFBF-FFFF
+    FreeRange::new(0x01_35EC, 0x01_362F), // $02:B5EC-B62F
+    FreeRange::new(0x01_551E, 0x01_557F), // $02:D51E-D57F
+    FreeRange::new(0x01_7FE2, 0x01_7FFF), // $02:FFE2-FFFF
+    FreeRange::new(0x01_BA02, 0x01_BFFF), // $03:BA02-BFFF
+    FreeRange::new(0x01_D6AC, 0x01_D6FF), // $03:D6AC-D6FF
+    FreeRange::new(0x01_E05C, 0x01_E3FF), // $03:E05C-E3FF
+    FreeRange::new(0x01_FDE0, 0x01_FFFF), // $03:FDE0-FFFF
+    FreeRange::new(0x02_21B6, 0x02_23FF), // $04:A1B6-A3FF
+    FreeRange::new(0x02_6F3E, 0x02_727F), // $04:EF3E-F27F
+    FreeRange::new(0x02_7FB1, 0x02_7FFF), // $04:FFB1-FFFF
+    FreeRange::new(0x02_8E19, 0x02_8FFF), // $05:8E19-8FFF
+    FreeRange::new(0x02_A561, 0x02_A57F), // $05:A561-A57F
+    FreeRange::new(0x02_BBA6, 0x02_BBFF), // $05:BBA6-BBFF
+    FreeRange::new(0x02_CFEA, 0x02_CFFF), // $05:CFEA-CFFF
+    FreeRange::new(0x02_D665, 0x02_D707), // $05:D665-D707
+    FreeRange::new(0x02_DC46, 0x02_DFFF), // $05:DC46-DFFF
+    FreeRange::new(0x03_25B9, 0x03_25FF), // $06:A5B9-A5FF
+    FreeRange::new(0x03_4964, 0x03_4FFF), // $06:C964-CFFF
+    FreeRange::new(0x03_7539, 0x03_7FFF), // $06:F539-FFFF
+    FreeRange::new(0x03_80ED, 0x03_80FF), // $07:80ED-80FF
+    FreeRange::new(0x03_A179, 0x03_A5FF), // $07:A179-A5FF
+    FreeRange::new(0x03_C226, 0x03_C2FF), // $07:C226-C2FF
+    FreeRange::new(0x03_E76F, 0x03_EFFF), // $07:E76F-EFFF
+    FreeRange::new(0x03_FC90, 0x03_FFFF), // $07:FC90-FFFF
+    FreeRange::new(0x05_FD0D, 0x05_FFFF), // $0B:FD0D-FFFF
+    FreeRange::new(0x06_366F, 0x06_37FF), // $0C:B66F-B7FF
+    FreeRange::new(0x06_586F, 0x06_58FF), // $0C:D86F-D8FF
+    FreeRange::new(0x06_7FDF, 0x06_7FFF), // $0C:FFDF-FFFF
+    FreeRange::new(0x06_98C8, 0x06_98FF), // $0D:98C8-98FF
+    FreeRange::new(0x06_A0A0, 0x06_A0FF), // $0D:A0A0-A0FF
+    FreeRange::new(0x06_BB68, 0x06_BBFF), // $0D:BB68-BBFF
+    FreeRange::new(0x06_C620, 0x06_C7FF), // $0D:C620-C7FF
+    FreeRange::new(0x06_D282, 0x06_D3FF), // $0D:D282-D3FF
+    FreeRange::new(0x06_E186, 0x06_E2FF), // $0D:E186-E2FF
+    FreeRange::new(0x06_F08A, 0x06_F2FF), // $0D:F08A-F2FF
+    FreeRange::new(0x06_FE9F, 0x06_FFFF), // $0D:FE9F-FFFF
+    FreeRange::new(0x07_70F0, 0x07_7FFF), // $0E:F0F0-FFFF
+    FreeRange::new(0x07_EF90, 0x07_FFFF), // $0F:EF90-FFFF
+];
+
+/// The player entrance position tables (`docs/formats/level-header.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct EntranceTables {
+    /// 16 low bytes of the entrance Y pixel, indexed by the Y position index.
+    pub y_low: SnesAddr,
+    /// 16 high bytes of the entrance Y pixel.
+    pub y_high: SnesAddr,
+    /// 8 low bytes of the entrance X pixel, indexed by the X position index.
+    pub x_low: SnesAddr,
+    /// 8 high bytes of the entrance X pixel.
+    pub x_high: SnesAddr,
+}
+
 /// Resolved table locations for one ROM.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RomLayout {
@@ -140,6 +244,10 @@ pub struct RomLayout {
     /// `docs/formats/level-header.md`
     pub secondary_header: [SnesAddr; 4],
 
+    /// Four 512-entry byte tables holding the secondary exits.
+    /// `docs/formats/level-header.md`
+    pub secondary_exits: [SnesAddr; 4],
+
     /// Pointers to the LC_LZ2-compressed GFX00-GFX31 files (three parallel
     /// 50-byte tables). `docs/formats/gfx.md`
     pub gfx_ptrs: SplitPointerTable,
@@ -163,6 +271,18 @@ pub struct RomLayout {
 
     /// The level loader and its RAM. `docs/formats/level-load-routine.md`
     pub loader: LevelLoader,
+
+    /// Player entrance position tables.
+    pub entrance: EntranceTables,
+
+    /// First file offset of expanded space: everything from here up is free
+    /// unless a RATS tag claims it. `docs/formats/rats.md`
+    pub expanded_start_pc: usize,
+
+    /// Byte ranges inside the original image known to be unused. These are
+    /// the only places a vanilla-safe save may allocate below
+    /// `expanded_start_pc` (sprite data must stay in bank `$07`).
+    pub known_free: &'static [FreeRange],
 }
 
 /// The vanilla USA ROM layout.
@@ -178,6 +298,12 @@ pub const VANILLA: RomLayout = RomLayout {
         SnesAddr::lit(0x05_F200),
         SnesAddr::lit(0x05_F400),
         SnesAddr::lit(0x05_F600),
+    ],
+    secondary_exits: [
+        SnesAddr::lit(0x05_F800),
+        SnesAddr::lit(0x05_FA00),
+        SnesAddr::lit(0x05_FC00),
+        SnesAddr::lit(0x05_FE00),
     ],
     gfx_ptrs: SplitPointerTable {
         low: SnesAddr::lit(0x00_B992),
@@ -218,6 +344,14 @@ pub const VANILLA: RomLayout = RomLayout {
         ram_bg_tilemap_low: 0x7E_B900,
         ram_bg_tilemap_high: 0x7E_BD00,
     },
+    entrance: EntranceTables {
+        y_low: SnesAddr::lit(0x05_D730),
+        y_high: SnesAddr::lit(0x05_D740),
+        x_low: SnesAddr::lit(0x05_D750),
+        x_high: SnesAddr::lit(0x05_D758),
+    },
+    expanded_start_pc: 0x08_0000,
+    known_free: &VANILLA_FREE_RANGES,
 };
 
 impl RomLayout {

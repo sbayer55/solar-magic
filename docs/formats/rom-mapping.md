@@ -49,3 +49,19 @@ candidate offsets (`0x7FC0`, `0xFFC0`) and requires a minimum plausibility
 
 Verified against `Super Mario World (USA).sfc` on 2026-10-06: title, map mode,
 sizes, checksum pair, and that the computed checksum equals `$A0DA`.
+
+## Writing (`Rom::write`, `expand_to`, `fix_checksum`, `save`)
+
+- Writes are file-contiguous like reads; a write that overlaps the header
+  re-parses it, so `Rom::header()` never goes stale.
+- `expand_to(len)` requires a power of two no smaller than the image and no
+  larger than the mapping allows (4 MiB for LoROM), pads with `0x00` and sets
+  the size code to `log2(len) - 10`. Lunar Magic expands a vanilla ROM to
+  1 MiB (`$0A`) on its first save and also pads with `0x00` (verified
+  2026-10-07 against an LM 3.71 save: bytes `0x80000..` are zero apart from
+  RATS-tagged blocks).
+- `fix_checksum` writes `FF FF 00 00` over complement + checksum, sums the
+  image, then stores complement and checksum little-endian. Those four bytes
+  always contribute `0x1FE`, so the result is stable under repeated fixes.
+- `save` re-prepends the copier header that was stripped on load and writes
+  through a sibling `.tmp` file followed by a rename.

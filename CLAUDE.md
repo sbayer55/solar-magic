@@ -16,9 +16,13 @@ cargo solar info "roms/Super Mario World (USA).sfc"
 cargo solar dump-gfx  "roms/Super Mario World (USA).sfc" <out_dir> [--id 14] [--row 2]
 cargo solar dump-map16 "roms/Super Mario World (USA).sfc" <out.png> [--tileset 0] [--bg]
 cargo solar dump-level "roms/Super Mario World (USA).sfc" 105
-cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> [--layers one|two|all]
+cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> [--layers one|two|all] [--sprites] [--owners]
+cargo solar dump-exits "roms/Super Mario World (USA).sfc" [id]
+cargo solar dump-owners "roms/Super Mario World (USA).sfc" 105
+cargo solar expand <rom> <out> --size 1M        # also: free-space, rats, bg-rle, gfx-check
+cargo solar relocate-level <rom> <out> 105      # also: copy-level, apply-level (from dump-level --json)
 W65C816_TESTS_DIR=<dir of SingleStepTests 65816 v1 json> cargo test -p w65c816 --release --test single_step
-cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # GUI viewer
+cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # GUI editor
 ```
 
 To check the GUI visually: launch it in the background, then `screencapture -x shot.png`
@@ -54,5 +58,10 @@ Linux and Windows.
   etc.); the 512-level round-trip test enforces this.
 - Level tiles come from running the game's loader in `w65c816`
   (`docs/formats/level-load-routine.md`), never from hand-ported object code.
+- Edits live in a `Level` value and are previewed through bus overlays; the
+  ROM is only written by `save_level` (vanilla-safe: RATS-tagged relocation,
+  never overwrite untagged vanilla data). See `docs/formats/rats.md`.
+- `roms/` lives in the main checkout; worktrees must use an absolute path or
+  a symlink. Lunar Magic test material is under `roms/lm371/`.
 - `as` casts live only in `crates/w65c816/src/bits.rs` and `const fn`
   accessors, each with an item-level allow and reason.

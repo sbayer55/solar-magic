@@ -7,13 +7,17 @@ use smw_data::level::{Layer2, Level, ObjectKind};
 use smw_data::{LevelId, RomLayout};
 use snes_rom::Rom;
 
-/// Prints everything known about level `number`.
-pub(crate) fn run(rom_path: &Path, number: u16) -> anyhow::Result<()> {
+/// Prints everything known about level `number`, or its JSON form.
+pub(crate) fn run(rom_path: &Path, number: u16, json: bool) -> anyhow::Result<()> {
     let rom = Rom::load(rom_path).with_context(|| format!("loading {}", rom_path.display()))?;
     let layout = RomLayout::detect(&rom)?;
     let id = LevelId::new(number)
         .with_context(|| format!("level {number:#X} is out of range (max 1FF)"))?;
     let level = Level::load(&rom, &layout, id)?;
+    if json {
+        println!("{}", serde_json::to_string_pretty(&level).context("serializing level")?);
+        return Ok(());
+    }
     print_headers(&rom, &layout, &level)?;
     print_objects("Layer 1", &level.layer1);
     match &level.layer2 {

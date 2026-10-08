@@ -5,7 +5,10 @@ use core::fmt;
 /// A 24-bit SNES bus address, conventionally written `$BB:HHLL`.
 ///
 /// The value is always `<= 0xFF_FFFF`.
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(try_from = "u32", into = "u32")]
 pub struct SnesAddr(u32);
 
 impl SnesAddr {

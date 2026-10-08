@@ -18,6 +18,46 @@ pub trait Mapper: fmt::Debug + Send + Sync {
     /// Maps a file offset back to the canonical bus address that reads it, or
     /// `None` if the offset is beyond what the mapping can address.
     fn to_snes(&self, pc: usize) -> Option<SnesAddr>;
+
+    /// Largest image size, in bytes, that this mapping can address.
+    fn max_size(&self) -> usize;
+}
+
+/// The closed set of mappers a [`crate::Rom`] can use.
+///
+/// An enum rather than a trait object so that `Rom` is `Clone`; new mappings
+/// (ExLoROM, SA-1) are added as variants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum MapperKind {
+    /// Standard LoROM.
+    LoRom(LoRom),
+}
+
+impl Mapper for MapperKind {
+    fn name(&self) -> &'static str {
+        match self {
+            Self::LoRom(m) => m.name(),
+        }
+    }
+
+    fn to_pc(&self, addr: SnesAddr) -> Option<usize> {
+        match self {
+            Self::LoRom(m) => m.to_pc(addr),
+        }
+    }
+
+    fn to_snes(&self, pc: usize) -> Option<SnesAddr> {
+        match self {
+            Self::LoRom(m) => m.to_snes(pc),
+        }
+    }
+
+    fn max_size(&self) -> usize {
+        match self {
+            Self::LoRom(m) => m.max_size(),
+        }
+    }
 }
 
 /// Standard LoROM ("mode 20") mapping.
@@ -61,6 +101,10 @@ impl Mapper for LoRom {
         let bank = if matches!(half_bank, 0x7E | 0x7F) { half_bank | 0x80 } else { half_bank };
         let offset = u16::try_from(pc & 0x7FFF).ok()? | 0x8000;
         Some(SnesAddr::from_parts(bank, offset))
+    }
+
+    fn max_size(&self) -> usize {
+        Self::MAX_SIZE
     }
 }
 

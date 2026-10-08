@@ -8,10 +8,28 @@ use w65c816::{Addr, Bus};
 /// Size of work RAM.
 pub const WRAM_LEN: usize = 0x2_0000;
 
+/// Bytes that shadow the ROM at a bus address range: how edited level data
+/// is fed to the game's loader without touching the ROM.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overlay {
+    /// First bus address covered.
+    pub start: Addr,
+    /// The bytes.
+    pub bytes: Vec<u8>,
+}
+
+impl Overlay {
+    fn get(&self, addr: Addr) -> Option<u8> {
+        let index = usize::try_from(addr.checked_sub(self.start)?).ok()?;
+        self.bytes.get(index).copied()
+    }
+}
+
 /// ROM plus WRAM, no hardware.
 pub struct SnesBus<'a> {
     rom: &'a Rom,
     wram: Vec<u8>,
+    overlays: Vec<Overlay>,
     hardware_writes: u64,
 }
 
@@ -27,7 +45,12 @@ impl<'a> SnesBus<'a> {
     /// Creates a bus over `rom` with zeroed WRAM.
     #[must_use]
     pub fn new(rom: &'a Rom) -> Self {
-        Self { rom, wram: vec![0; WRAM_LEN], hardware_writes: 0 }
+        Self { rom, wram: vec![0; WRAM_LEN], overlays: Vec::new(), hardware_writes: 0 }
+    }
+
+    /// Makes `overlay` shadow the ROM for reads of its address range.
+    pub fn add_overlay(&mut self, overlay: Overlay) {
+        self.overlays.push(overlay);
     }
 
     /// WRAM as a slice (`$7E:0000` is index 0).
@@ -78,7 +101,7 @@ impl<'a> SnesBus<'a> {
 
 /// Maps a bus address to a WRAM index: banks `$7E`/`$7F` fully, plus the
 /// `$0000-$1FFF` mirror in banks `$00-$3F` and `$80-$BF`.
-fn wram_index(addr: Addr) -> Option<usize> {
+pub(crate) fn wram_index(addr: Addr) -> Option<usize> {
     let bank = (addr >> 16) & 0xFF;
     let offset = addr & 0xFFFF;
     match bank {
@@ -103,6 +126,9 @@ impl Bus for SnesBus<'_> {
         }
         if is_hardware(addr) {
             return 0;
+        }
+        if let Some(v) = self.overlays.iter().find_map(|o| o.get(addr)) {
+            return v;
         }
         SnesAddr::new(addr & 0xFF_FFFF)
             .and_then(|a| self.rom.pc(a).ok())
