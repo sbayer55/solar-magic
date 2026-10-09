@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context as _, bail};
+use smw_data::layout::{KnownRange, label_address};
 use smw_data::level::Level;
 use smw_data::{LevelId, RomLayout};
 use smw_render::emu::{SnesBus, Trace};
@@ -30,18 +31,27 @@ pub(crate) struct Options {
     pub(crate) m8: bool,
     /// 8-bit index registers.
     pub(crate) x8: bool,
+    /// Hide ROM ranges a known table accounts for.
+    pub(crate) unknown_only: bool,
 }
 
 /// Runs the trace and prints the report.
 pub(crate) fn run(path: &Path, opts: &Options) -> anyhow::Result<()> {
     let rom = Rom::load(path).with_context(|| format!("loading {}", path.display()))?;
-    let layout = RomLayout::detect(&rom)?;
+    let (layout, note) = crate::diff_rom::best_effort_layout(&rom);
+    if let Some(note) = note {
+        println!("note: {note}");
+    }
     let trace = if let Some(level) = opts.target.strip_prefix("level:") {
+        if !layout.is_lunar_magic() && RomLayout::lunar_magic_signature(&rom).is_some() {
+            bail!("level loads need a supported layout; this Lunar Magic version is not");
+        }
         trace_level(&rom, &layout, level)?
     } else {
         trace_routine(&rom, opts)?
     };
-    print_trace(&trace, opts.gap);
+    let known = layout.known_ranges(&rom);
+    print_trace(&trace, opts.gap, &known, opts.unknown_only);
     Ok(())
 }
 
@@ -87,13 +97,36 @@ fn trace_routine(rom: &Rom, opts: &Options) -> anyhow::Result<Trace> {
     bus.take_trace().context("tracing was enabled")
 }
 
-fn print_trace(trace: &Trace, gap: u32) {
-    print_ranges("ROM read", &trace.rom_reads, gap);
+fn print_trace(trace: &Trace, gap: u32, known: &[KnownRange], unknown_only: bool) {
+    print_rom_ranges(&trace.rom_reads, gap, known, unknown_only);
     print_ranges("WRAM written", &trace.wram_writes, gap);
     print_ranges("WRAM read before written", &trace.wram_reads_uninit, gap);
     println!("hardware registers: {} distinct", trace.hardware.len());
     for (addr, (reads, writes)) in &trace.hardware {
         println!("  {}  {reads:>6} reads  {writes:>6} writes", snes(*addr));
+    }
+}
+
+/// ROM ranges, each labelled by the known table it starts in (if any).
+fn print_rom_ranges(set: &BTreeSet<Addr>, gap: u32, known: &[KnownRange], unknown_only: bool) {
+    let ranges = Trace::ranges(set, gap);
+    println!("ROM read: {} bytes in {} ranges", set.len(), ranges.len());
+    for (first, last) in ranges {
+        let label = snes_rom::SnesAddr::new(first).and_then(|a| label_address(known, a));
+        if unknown_only && label.is_some() {
+            continue;
+        }
+        // "..." marks a range that runs past the table it starts in.
+        let covered =
+            snes_rom::SnesAddr::new(last).is_some_and(|a| known.iter().any(|r| r.contains(a)));
+        let len = last.saturating_sub(first).saturating_add(1);
+        println!(
+            "  {}..{}  {len:>6} bytes  {}{}",
+            snes(first),
+            snes(last),
+            label.as_deref().unwrap_or("?"),
+            if label.is_some() && !covered { " ..." } else { "" }
+        );
     }
 }
 

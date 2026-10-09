@@ -5,14 +5,18 @@
 //! but adds its own, described by [`LunarMagicTables`]; [`RomLayout::detect`]
 //! picks the layout.
 
+mod known;
 mod lunar_magic;
+mod markers;
 mod vanilla;
 
 use core::fmt;
 
 use snes_rom::{Rom, SnesAddr};
 
+pub use known::{KnownRange, label_address};
 pub use lunar_magic::{LM_25X, LunarMagicTables};
+pub use markers::{LmMarker, MARKER_LEN, MarkerPlacement, scan_marker_bytes, scan_markers};
 pub use vanilla::{VANILLA, VANILLA_FREE_RANGES};
 
 use crate::LayoutError;

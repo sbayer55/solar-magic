@@ -6,6 +6,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod bg_rle;
+mod diff_rom;
 mod dump_exits;
 mod dump_gfx;
 mod dump_level;
@@ -114,6 +115,23 @@ enum Command {
         #[arg(value_parser = parse_hex_u16)]
         level: u16,
     },
+    /// Compare two ROM images: changed byte ranges labelled by the tables
+    /// they fall in, RATS tags added or removed, and Lunar Magic markers.
+    DiffRom {
+        /// The older image.
+        a: PathBuf,
+        /// The newer image.
+        b: PathBuf,
+        /// Merge changed ranges fewer than this many bytes apart.
+        #[arg(long, default_value_t = 4)]
+        gap: usize,
+        /// Also list every Lunar Magic marker of both images.
+        #[arg(long)]
+        markers: bool,
+        /// Print at most this many changed ranges.
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
     /// Run a ROM routine (or a level load) in the emulator and report every
     /// ROM range it read, WRAM range it wrote or read uninitialised, and
     /// hardware register it touched.
@@ -139,6 +157,9 @@ enum Command {
         /// Start with 8-bit X/Y.
         #[arg(long)]
         x8: bool,
+        /// Only print ROM ranges that no known table accounts for.
+        #[arg(long)]
+        unknown_only: bool,
     },
     /// Print secondary exits (all non-blank ones, or a single one).
     DumpExits {
@@ -292,8 +313,11 @@ fn main() -> ExitCode {
         Command::RelocateLevel { rom, out, level } => level_io::relocate(&rom, &out, level),
         Command::CopyLevel { rom, out, src, dst } => level_io::copy(&rom, &out, src, dst),
         Command::DumpExits { rom, exit } => dump_exits::run(&rom, exit),
-        Command::Trace { rom, target, ram, steps, gap, m8, x8 } => {
-            trace::run(&rom, &trace::Options { target, ram, steps, gap, m8, x8 })
+        Command::DiffRom { a, b, gap, markers, limit } => {
+            diff_rom::run(&a, &b, &diff_rom::Options { gap, markers, limit })
+        }
+        Command::Trace { rom, target, ram, steps, gap, m8, x8, unknown_only } => {
+            trace::run(&rom, &trace::Options { target, ram, steps, gap, m8, x8, unknown_only })
         }
         Command::Render { rom, level, out, layers, scale, sprites, owners } => {
             render::run(&rom, &out, render::Options { level, layers, scale, sprites, owners })

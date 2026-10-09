@@ -61,6 +61,48 @@ Object stream additions (direct Map16 objects, 5-byte exit) are in
 | BG page set pointers | `$0E:FD50` | 24-bit entries, 16 pages (0x8000 bytes max) each; entry 0 = pages 0x10-0x1F (`$26:8000` / `$13:8000`), whose first 0x1000 bytes equal vanilla `$0D:9100`. |
 | Map16 "acts like" table | `$11:8000` (via `$06:F600`) | 2 bytes per tile, identity by default. Not needed for viewing. |
 
+## Markers
+
+Verified 2026-10-08 against Quickie World 2 (2.53, 19 markers) and an LM 3.71
+save of the vanilla ROM (26 markers); the vanilla ROM has none. Lunar Magic
+stamps a 4-byte marker `"LM" kind revision` (both bytes below `0x20`,
+revision non-zero) in two places:
+
+- immediately before each 16-byte-aligned routine it installs in the fixed
+  banks (`$06:F5FC` before the acts-like getter, `$0D:E1AC`/`$0D:E1CC`/
+  `$0D:E1EC` before extended objects 02/01/03, `$0E:F54C`, `$0E:FD3C`, …);
+- as the last four bytes of the RATS blocks holding its own code and tables
+  (padded with `0x20`); level-data blocks carry none.
+
+Kinds seen: `00` (code), `01`, `02`, `03`, `10`, `11`; revisions `01` and
+`02`. `smw_data::layout::scan_markers` finds them, `solar info` counts them
+and `solar diff-rom --markers` lists them. Their exact meaning is not decoded.
+
+## Lunar Magic 3.71 (first observations, 2026-10-08)
+
+From `solar diff-rom vanilla a-unchanged.sfc` (an LM 3.71 save with level
+105 untouched) and byte probes; not yet supported by `RomLayout::detect`:
+
+- Five of the six 2.5x fingerprints match. The layer 2 flags hook body at
+  `$0E:F510` differs: `38 E9 7F D0 08 8F 0B C0 7F …` (`SEC; SBC #$7F`)
+  instead of `C9 FF D0 09 1A …`.
+- **Every vanilla `$FF` bank byte in the layer 2 pointer table is rewritten
+  to `$0C`** (the real bank), and the flags byte at `$0E:F310` carries `08`
+  for a page-0 background, `18` for page 1 (offset ≥ `$E8FE`) and `00` for
+  object layer 2. So in 3.x bit 3 means "tilemap in bank `$0C`" and the
+  page lives in bits 4–7; bits 1 (relocated) and 2 (16-bit) keep their 2.5x
+  meaning.
+- `$05:DE00` (2.5x secondary header byte 4) is zeroed; `$06:FA00` holds
+  `20` per level, `$06:FC00` `00`, `$06:FE00` `1A`. `$05:FF00–FFFF` (the
+  upper half of the fourth vanilla secondary-exit table, unused by vanilla)
+  is written, as are unused secondary exits above `0xCE` (zeroed).
+- Extended objects 01 and 03 have code at `$0D:E1D0` / `$0D:E1E0`; objects
+  0x24–0x26 are null routines in 3.71.
+- The unchanged level 105 is re-saved: layer 1 at `$10:8008`, sprites at
+  `$10:8640` with `$0E:F100[0x105] = $10`; the background stays at
+  `$0C:D900`. Thirteen RATS blocks in total, the last (32 KiB at
+  `0x087FF8`) holding LM's own code bank.
+
 ## Other known extensions (not handled)
 
 Expanded overworld, layer 3 editing, custom overworld sprites (`$0E:F55D`),
