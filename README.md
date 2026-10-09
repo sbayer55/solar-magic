@@ -28,6 +28,7 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | E7 LC_LZ2 compressor (`solar gfx-check`) | done |
 | G1–G4 editor: select, rubber band, drag, insert, delete, cut/copy/paste, undo/redo, header and exit editing, Save / Save As with dirty tracking | done |
 | G5 direct Map16 paint tool | pending (needs Lunar Magic's object format) |
+| Prep for Lunar Magic compatibility: `solar trace` (ROM/WRAM access tracing of any routine or level load), secondary exits in the undo stack, paste at the cursor, saved-block leak fixes | done |
 | Lunar Magic ROM compatibility, rendering fidelity (sprites, priority, layer 3), overworld | planned, see `docs/ARCHITECTURE.md` |
 | Tools: IPS patcher (`solar ips-apply` / `ips-create` / `ips-info`, GUI Tools → IPS Patcher) | done: Lunar IPS parity (RLE, expand/truncate, apply log, copier-header add/strip) |
 
@@ -42,6 +43,7 @@ cargo solar dump-gfx "roms/Super Mario World (USA).sfc" out/gfx --row 2
 cargo solar dump-map16 "roms/Super Mario World (USA).sfc" out/map16.png --tileset 0
 cargo solar dump-level "roms/Super Mario World (USA).sfc" 105
 cargo solar render "roms/Super Mario World (USA).sfc" 105 out/level105.png --sprites
+cargo solar trace "roms/Super Mario World (USA).sfc" level:105      # what the loader reads and writes
 cargo solar relocate-level "roms/Super Mario World (USA).sfc" out/edited.sfc 105
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # the editor
 cargo solar ips-info hack.ips

@@ -20,8 +20,7 @@ impl Viewer<'_> {
                 ui.add_space(8.0);
             }
             ui.heading("Secondary exits");
-            ui.label("Edits here are written to the ROM on Save (not undoable).");
-            secondary_exit_editor(ui, self.doc);
+            secondary_exit_editor(ui, self.doc, &mut actions);
         });
         self.actions.append(&mut actions);
     }
@@ -69,7 +68,7 @@ fn screen_exit_table(
     });
 }
 
-fn secondary_exit_editor(ui: &mut egui::Ui, doc: &mut Document) {
+fn secondary_exit_editor(ui: &mut egui::Ui, doc: &Document, actions: &mut Vec<Action>) {
     let id_key = egui::Id::new("secondary_exit_id");
     let mut id_value: u16 = ui.data(|d| d.get_temp(id_key)).unwrap_or(0);
     ui.horizontal(|ui| {
@@ -77,15 +76,11 @@ fn secondary_exit_editor(ui: &mut egui::Ui, doc: &mut Document) {
         hex_word(ui, &mut id_value, 0x1FF);
     });
     ui.data_mut(|d| d.insert_temp(id_key, id_value));
-    let Some(id) = ExitId::new(id_value) else {
+    let (Some(id), Some(session)) = (ExitId::new(id_value), doc.session.as_ref()) else {
         return;
     };
-    let stored = doc
-        .pending_exits
-        .get(&id)
-        .copied()
-        .or_else(|| SecondaryExit::load(&doc.rom, &doc.layout, id).ok());
-    let Some(mut exit) = stored else {
+    let in_rom = SecondaryExit::load(&doc.rom, &doc.layout, id).ok();
+    let Some(mut exit) = session.exits.get(&id).copied().or(in_rom) else {
         return;
     };
     let mut changed = false;
@@ -103,9 +98,9 @@ fn secondary_exit_editor(ui: &mut egui::Ui, doc: &mut Document) {
         }
     });
     if changed {
-        doc.pending_exits.insert(id, exit);
+        actions.push(Action::Apply(EditCommand::SetSecondaryExit { id, exit }));
     }
-    if doc.pending_exits.contains_key(&id) {
-        ui.label("modified (pending save)");
+    if in_rom.is_some_and(|stored| stored != exit) {
+        ui.label("modified (written on Save)");
     }
 }

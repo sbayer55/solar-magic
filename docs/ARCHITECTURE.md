@@ -37,8 +37,8 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 | `smw-data` | viewer, LM 2.5x reading, editing | `RomLayout` (vanilla tables plus Lunar Magic 2.5x's `LunarMagicTables`, known free space), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers with bit-field tables, objects including Lunar Magic's, layer 2 including 16-bit tilemaps with an RLE codec, sprites, secondary exits; byte-exact re-serialization; editing API; vanilla-safe `save_level`). |
 | `lc-lz2` | done | LC_LZ2 decompress and compress. |
 | `w65c816` | done | Minimal CPU interpreter with a `Bus` trait. No timing, no PPU. Passes the SingleStepTests 65816 native-mode suite (run with `W65C816_TESTS_DIR`). |
-| `smw-render` | viewer, LM 2.5x, ownership | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
-| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`. Also the test oracle. |
+| `smw-render` | viewer, LM 2.5x, ownership, tracing | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays and an optional access `Trace`) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
+| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `trace`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`. Also the test oracle. |
 | `solar-magic` | editor | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette. Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
 
 ## The vanilla / Lunar Magic seam
@@ -75,6 +75,21 @@ are updated and the checksum fixed. See `docs/formats/rats.md`.
 Per-object selection comes from `smw_render::ownership`: the loader fetches
 each object's bytes through the bus, so a wrapper tags every subsequent
 tile-RAM write with that object; the last writer wins.
+
+Secondary exits are ROM-global, so the session keeps the edited ones beside
+the level (`EditSession::exits`); every command snapshots both, so they share
+the level's undo stack and are written on Save.
+
+## Reverse-engineering tooling
+
+`SnesBus::enable_trace` records every ROM byte read, WRAM byte written, WRAM
+byte read before it was written, and hardware register touched. `solar trace
+<rom> level:<n>` runs the level loader that way and `solar trace <rom>
+<bank:offset> [--ram addr=val]` `JSL`s into any routine, printing the touched
+ranges coalesced. This is how table locations are found before they are
+verified and recorded in `docs/formats/`: for example `solar trace rom
+04:DC57` shows the overworld layer 1 tilemap being copied from
+`$0C:F7DF..$0C:FFDE` to `$7E:C800`.
 
 ## Rendering pipeline
 

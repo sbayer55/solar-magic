@@ -198,6 +198,11 @@ impl<'a> AttributedBus<'a> {
         &self.inner
     }
 
+    /// The wrapped bus, mutably.
+    pub const fn inner_mut(&mut self) -> &mut SnesBus<'a> {
+        &mut self.inner
+    }
+
     /// The object of `layer` that last wrote the WRAM byte at `addr`.
     #[must_use]
     pub fn owner_at(&self, layer: Layer, addr: Addr) -> Option<u16> {

@@ -21,6 +21,7 @@ mod ips_info;
 mod level_io;
 mod png;
 mod render;
+mod trace;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -112,6 +113,32 @@ enum Command {
         /// Level number in hex (000-1FF).
         #[arg(value_parser = parse_hex_u16)]
         level: u16,
+    },
+    /// Run a ROM routine (or a level load) in the emulator and report every
+    /// ROM range it read, WRAM range it wrote or read uninitialised, and
+    /// hardware register it touched.
+    Trace {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// `level:<hex>` to run the level loader on that level, or a SNES
+        /// address such as `04:DC57` to `JSL` into a routine.
+        target: String,
+        /// WRAM bytes to seed before the call, as `addr=value` in hex (one,
+        /// two or three value bytes by digit count), e.g. `0E=105`.
+        #[arg(long = "ram")]
+        ram: Vec<String>,
+        /// Instruction budget.
+        #[arg(long, default_value_t = 10_000_000)]
+        steps: u64,
+        /// Merge ranges that are fewer than this many bytes apart.
+        #[arg(long, default_value_t = 8)]
+        gap: u32,
+        /// Start with 8-bit A (default is 16-bit A and X in native mode).
+        #[arg(long)]
+        m8: bool,
+        /// Start with 8-bit X/Y.
+        #[arg(long)]
+        x8: bool,
     },
     /// Print secondary exits (all non-blank ones, or a single one).
     DumpExits {
@@ -265,6 +292,9 @@ fn main() -> ExitCode {
         Command::RelocateLevel { rom, out, level } => level_io::relocate(&rom, &out, level),
         Command::CopyLevel { rom, out, src, dst } => level_io::copy(&rom, &out, src, dst),
         Command::DumpExits { rom, exit } => dump_exits::run(&rom, exit),
+        Command::Trace { rom, target, ram, steps, gap, m8, x8 } => {
+            trace::run(&rom, &trace::Options { target, ram, steps, gap, m8, x8 })
+        }
         Command::Render { rom, level, out, layers, scale, sprites, owners } => {
             render::run(&rom, &out, render::Options { level, layers, scale, sprites, owners })
         }

@@ -22,6 +22,7 @@ ips.workspace = true
 smw-data.workspace = true
 smw-render.workspace = true
 snes-rom.workspace = true
+w65c816.workspace = true
 
 [lints]
 workspace = true
