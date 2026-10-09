@@ -31,6 +31,7 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | Prep for Lunar Magic compatibility: `solar trace` (ROM/WRAM access tracing of any routine or level load), secondary exits in the undo stack, paste at the cursor, saved-block leak fixes | done |
 | LM0 reverse-engineering tooling: `solar diff-rom` (changed ranges labelled by table, RATS tag changes, Lunar Magic markers), labelled `trace` output, `RomLayout::known_ranges`, marker scanning in `info` | done |
 | LM1 version-agnostic Lunar Magic detection: per-feature hijack scan (`LmFeatures`), 2.5x and 3.x layer 2 flag formats; LM 3.71 ROMs open and render identically to vanilla | done |
+| LM9 `.mwl` level files: `solar mwl-export` / `mwl-import` / `mwl-info` / `export-all` / `import-all`; exports equal Lunar Magic 3.71's byte for byte | done |
 | Lunar Magic ROM compatibility, rendering fidelity (sprites, priority, layer 3), overworld | planned, see `docs/ARCHITECTURE.md` |
 | Tools: IPS patcher (`solar ips-apply` / `ips-create` / `ips-info`, GUI Tools → IPS Patcher) | done: Lunar IPS parity (RLE, expand/truncate, apply log, copier-header add/strip) |
 
@@ -47,6 +48,8 @@ cargo solar dump-level "roms/Super Mario World (USA).sfc" 105
 cargo solar render "roms/Super Mario World (USA).sfc" 105 out/level105.png --sprites
 cargo solar trace "roms/Super Mario World (USA).sfc" level:105      # what the loader reads and writes
 cargo solar diff-rom before.sfc after.sfc --markers                 # what Lunar Magic changed, by table
+cargo solar mwl-export "roms/Super Mario World (USA).sfc" 105 out/105.mwl
+cargo solar mwl-import "roms/Super Mario World (USA).sfc" out/hack.sfc out/105.mwl --level 106
 cargo solar relocate-level "roms/Super Mario World (USA).sfc" out/edited.sfc 105
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # the editor
 cargo solar ips-info hack.ips

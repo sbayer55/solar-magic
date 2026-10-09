@@ -7,10 +7,11 @@
 //! Verified 2026-10-08 against Quickie World 1.12 (2.52), Quickie World 2
 //! (2.53) and a 3.71 save of the vanilla ROM.
 
-use snes_rom::{Rom, SnesAddr};
+use snes_rom::{Rom, RomError, SnesAddr};
 
 use super::{LayoutKind, RomLayout, VANILLA};
-use crate::LayoutError;
+use crate::level::ExitId;
+use crate::{LayoutError, LevelId};
 
 bitflags::bitflags! {
     /// Which Lunar Magic hijacks a ROM carries.
@@ -36,6 +37,11 @@ bitflags::bitflags! {
         const EXT_OBJECTS_3X = 1 << 8;
         /// The Map16 "acts like" getter (`$06:F600`).
         const ACTS_LIKE_GETTER = 1 << 9;
+        /// 3.x custom level dimensions: `JSL` at `$05:D9A1` whose target
+        /// holds a pointer to the per-level dimension table.
+        const LEVEL_DIMENSIONS = 1 << 10;
+        /// 3.x secondary exit extra bytes: `LDA long,X` getters at `$05:DC85`.
+        const SECONDARY_EXIT_EXT = 1 << 11;
     }
 }
 
@@ -127,8 +133,70 @@ pub struct LunarMagicTables {
     pub fg_map16_getter: SnesAddr,
     /// Secondary header bytes 4, 5 and 6, one 0x200-byte table each.
     pub secondary_header_ext: [SnesAddr; 3],
+    /// 3.x per-level byte table at `$06:FA00` (`0x20` for untouched levels).
+    pub level_ext_fa00: SnesAddr,
+    /// Per-level `ExAnimation` flag bytes (`$03:FE00`, `FF` in vanilla).
+    pub exanim_flags: SnesAddr,
+    /// The `JSL` opcode of 3.x's level dimensions hook; its operand points
+    /// at a routine whose byte `0x70` holds a pointer to the per-level
+    /// dimension table.
+    pub dimensions_hook: SnesAddr,
+    /// Operands of the two `LDA long,X` getters for 3.x's secondary exit
+    /// bytes 4 and 5 (`$05:DC86`, `$05:DC8B`).
+    pub secondary_exit_ext_ops: [SnesAddr; 2],
     /// WRAM copy of the level's flags byte (`$7F:C00B`).
     pub ram_level_flags: u32,
+}
+
+/// Byte offset inside the dimensions routine of the table pointer.
+const DIMENSIONS_TABLE_PTR: u32 = 0x70;
+
+impl LunarMagicTables {
+    /// Lunar Magic 3.x's per-level dimension byte, when the ROM has the
+    /// feature. `docs/formats/mwl.md`
+    ///
+    /// # Errors
+    ///
+    /// ROM read failures.
+    pub fn level_dimensions(&self, rom: &Rom, id: LevelId) -> Result<Option<u8>, RomError> {
+        if !self.features.contains(LmFeatures::LEVEL_DIMENSIONS) {
+            return Ok(None);
+        }
+        let routine = rom.read_ptr(offset(self.dimensions_hook, 1)?)?;
+        let table = rom.read_ptr(offset(routine, DIMENSIONS_TABLE_PTR)?)?;
+        Ok(Some(rom.read_u8(offset(table, u32::from(id.get()))?)?))
+    }
+
+    /// Lunar Magic 3.x's extra two bytes of a secondary exit.
+    ///
+    /// # Errors
+    ///
+    /// ROM read failures.
+    pub fn secondary_exit_ext(&self, rom: &Rom, exit: ExitId) -> Result<Option<[u8; 2]>, RomError> {
+        if !self.features.contains(LmFeatures::SECONDARY_EXIT_EXT) {
+            return Ok(None);
+        }
+        let mut out = [0u8; 2];
+        for (slot, operand) in out.iter_mut().zip(self.secondary_exit_ext_ops) {
+            let table = rom.read_ptr(operand)?;
+            *slot = rom.read_u8(offset(table, u32::from(exit.get()))?)?;
+        }
+        Ok(Some(out))
+    }
+
+    /// The level's `ExAnimation` flag byte (0 when the table was never written).
+    ///
+    /// # Errors
+    ///
+    /// ROM read failures.
+    pub fn exanim_flag(&self, rom: &Rom, id: LevelId) -> Result<u8, RomError> {
+        let byte = rom.read_u8(offset(self.exanim_flags, u32::from(id.get()))?)?;
+        Ok(if byte == 0xFF { 0 } else { byte })
+    }
+}
+
+fn offset(base: SnesAddr, by: u32) -> Result<SnesAddr, RomError> {
+    base.checked_add(by).ok_or(RomError::Unmapped(base))
 }
 
 /// Lunar Magic's table addresses (identical in 2.52, 2.53 and 3.71).
@@ -152,6 +220,10 @@ pub const LM_25X: LunarMagicTables = LunarMagicTables {
         SnesAddr::lit(0x06_FC00),
         SnesAddr::lit(0x06_FE00),
     ],
+    level_ext_fa00: SnesAddr::lit(0x06_FA00),
+    exanim_flags: SnesAddr::lit(0x03_FE00),
+    dimensions_hook: SnesAddr::lit(0x05_D9A1),
+    secondary_exit_ext_ops: [SnesAddr::lit(0x05_DC86), SnesAddr::lit(0x05_DC8B)],
     ram_level_flags: 0x7F_C00B,
 };
 
@@ -256,6 +328,23 @@ const HIJACKS: &[Hijack] = &[
         feature: LmFeatures::ACTS_LIKE_GETTER,
         name: "Map16 acts-like getter ($06:F600)",
         variants: &[variant(&[check(0x06_F600, &[0xEA, 0xEA, 0x98, 0x5C, 0x45, 0xF5, 0x00])])],
+    },
+    Hijack {
+        feature: LmFeatures::LEVEL_DIMENSIONS,
+        name: "level dimensions hook ($05:D9A1)",
+        // Vanilla: `LDA $5B; AND #$01`; 3.x: `JSL` into its bank.
+        variants: &[variant(&[check(0x05_D9A1, &[0x22])])],
+    },
+    Hijack {
+        feature: LmFeatures::SECONDARY_EXIT_EXT,
+        name: "secondary exit extra byte getters ($05:DC85)",
+        // Two `LDA long,X; RTL` stubs.
+        variants: &[variant(&[
+            check(0x05_D9A1, &[0x22]),
+            check(0x05_DC85, &[0xBF]),
+            check(0x05_DC89, &[0x6B, 0xBF]),
+            check(0x05_DC8E, &[0x6B]),
+        ])],
     },
 ];
 
@@ -370,7 +459,10 @@ mod tests {
         let lm = layout.lm.expect("lunar magic");
         assert!(matches!(layout.kind, LayoutKind::LunarMagic { major: 2, .. }), "{}", layout.kind);
         assert_eq!(lm.layer2_flags_format, Layer2FlagsFormat::V25x);
-        assert_eq!(lm.features, LmFeatures::all().difference(LmFeatures::EXT_OBJECTS_3X));
+        let v3_only = LmFeatures::EXT_OBJECTS_3X
+            | LmFeatures::LEVEL_DIMENSIONS
+            | LmFeatures::SECONDARY_EXIT_EXT;
+        assert_eq!(lm.features, LmFeatures::all().difference(v3_only));
         assert_eq!(layout.sprite_banks, Some(lm.sprite_banks));
     }
 
@@ -383,5 +475,10 @@ mod tests {
         assert_eq!(lm.layer2_flags_format, Layer2FlagsFormat::V3x);
         assert_eq!(lm.features, LmFeatures::all());
         assert_eq!(layout.sprite_banks, Some(lm.sprite_banks));
+        let id = crate::LevelId::new(0x105).expect("valid");
+        assert_eq!(lm.level_dimensions(&rom, id).expect("reads"), Some(0));
+        let exit = crate::level::ExitId::new(0x1CB).expect("valid");
+        assert_eq!(lm.secondary_exit_ext(&rom, exit).expect("reads"), Some([0, 0]));
+        assert_eq!(lm.exanim_flag(&rom, id).expect("reads"), 0);
     }
 }

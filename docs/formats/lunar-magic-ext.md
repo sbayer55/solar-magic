@@ -55,7 +55,7 @@ Object stream additions (direct Map16 objects, 5-byte exit) are in
 | GFX00-33 pointers | vanilla split tables | Still used, but LM re-stored every file (several in bank `$1E`) as LC_LZ2 **4bpp** (0x1000 bytes) instead of 3bpp. |
 | ExGFX 80-FF pointers | `$0F:F600` | 0x80 × 24-bit; `000000` = not inserted. LC_LZ2; ExGFX80 in QW2 decompresses to 0x2000 bytes (256 tiles). |
 | ExGFX 100-FFF pointer table | `read3($0F:F937)` (= `$12:8008` here) | 0xF00 × 24-bit. |
-| Per-level "Super GFX Bypass" | `read3($0F:F7FF)` (= `$12:AD08` here) | 32 bytes (16 LE words) per level. Words 4-7 = FG3, BG1, FG2, FG1; 8-11 = SP4, SP3, SP2, SP1 (verified against the vanilla tileset lists); 12-15 = GFX 2B, 2A, 29, 28; 0-3 = extra slots (not yet decoded). `0x7F` = no file, `0xFFFF` = never saved, low 12 bits = file number, high bits = flags; word 0 bit 15 = bypass enabled. |
+| Per-level "Super GFX Bypass" | `read3($0F:F7FF)` (= `$12:AD08` here) | 32 bytes (16 LE words) per level. Words 4-7 = FG3, BG1, FG2, FG1; 8-11 = SP4, SP3, SP2, SP1 (verified against the vanilla tileset lists); 12-15 = LG4-LG1 (layer 3 GFX 2B, 2A, 29, 28); 0-3 = AN2, LT3, BG3, BG2 (named by the `.mwl` format description, `mwl.md`; not yet confirmed against a ROM with them set). `0x7F` = no file, `0xFFFF` = never saved, low 12 bits = file number, high bits = flags; word 0 bit 15 = bypass enabled. |
 | GFX decompression routine | `$0F:F900` | LM's own; replaces `$00:B8DE`. Not needed by Solar Magic. |
 
 ## Map16
@@ -126,6 +126,15 @@ objects 01/03, the new per-level tables) are still raw.
   then matches vanilla byte for byte. Custom heights need the real init.
 - Extended objects 01 and 03 have code at `$0D:E1D0` / `$0D:E1E0`; objects
   0x24–0x26 are null routines in 3.71.
+- More 3.x tables, all read for `.mwl` export (`mwl.md`): the level
+  dimensions hook `$05:D9A1` is a `JSL` whose target holds, at byte `0x70`,
+  a pointer to a per-level dimension byte table (`$10:E938` here;
+  `LEVEL_DIMENSIONS`); two `LDA long,X; RTL` stubs at `$05:DC85` and
+  `$05:DC8A` read the secondary exits' extra bytes 4 and 5 from tables at
+  their operands (`$10:86B0`, `$10:88B6`; `SECONDARY_EXIT_EXT`); `$03:FE00`
+  holds a per-level ExAnimation flag byte (`00` here, `FF` in vanilla and
+  in 2.5x ROMs it is `00` too); `$06:FA00` holds `20` per level. The
+  destination's bit 8 of a secondary exit is bit 3 of its `$05:FE00` byte.
 - The unchanged level 105 is re-saved: layer 1 at `$10:8008`, sprites at
   `$10:8640` with `$0E:F100[0x105] = $10`; the background stays at
   `$0C:D900`. Thirteen RATS blocks in total, the last (32 KiB at

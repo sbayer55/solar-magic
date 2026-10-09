@@ -59,7 +59,19 @@ pub struct SecondaryExit {
     pub raw: [u8; 4],
 }
 
+/// Bit of the fourth table byte Lunar Magic uses for the destination's bit 8.
+const LM_DESTINATION_HIGH: u8 = 0x08;
+
 impl SecondaryExit {
+    /// The 9-bit destination level. Vanilla takes bit 8 from the current
+    /// submap at run time (treated as 0 here); Lunar Magic stores it in bit
+    /// 3 of the `$05:FE00` byte (verified on a 3.71 ROM, `docs/formats/mwl.md`).
+    #[must_use]
+    pub fn destination(self, layout: &RomLayout) -> u16 {
+        let high = layout.lm.is_some() && self.raw[3] & LM_DESTINATION_HIGH != 0;
+        u16::from(self.raw[0]) | (u16::from(high) << 8)
+    }
+
     /// Reads exit `id` from the tables.
     ///
     /// # Errors

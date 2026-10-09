@@ -9,7 +9,7 @@ Read `docs/ARCHITECTURE.md` first; format details are in `docs/formats/`.
 cargo build --workspace
 cargo test --workspace                       # unit tests; real-ROM tests skip without SMW_ROM / LM_ROM
 # absolute paths: cargo runs each crate's tests from the crate directory
-SMW_ROM="$PWD/roms/Super Mario World (USA).sfc" LM_ROM="$PWD/roms/Patched_Quickie World 2/QW2.sfc" LM3_ROM="$PWD/roms/lm371/a-unchanged.sfc" cargo test --workspace
+SMW_ROM="$PWD/roms/Super Mario World (USA).sfc" LM_ROM="$PWD/roms/Patched_Quickie World 2/QW2.sfc" LM3_ROM="$PWD/roms/lm371/a-unchanged.sfc" LM_MWL="$PWD/roms/lm371/a-unchanged-105.mwl" cargo test --workspace
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo fmt --all --check
 cargo xtask check                            # 1000-LOC file limit, lint hygiene
@@ -25,6 +25,7 @@ cargo solar relocate-level <rom> <out> 105      # also: copy-level, apply-level 
 cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> [--layers one|two|all]
 cargo solar trace "roms/Super Mario World (USA).sfc" level:105 | 04:DC57 [--ram 0E=105] [--gap 8] [--unknown-only]
 cargo solar diff-rom <before.sfc> <after.sfc> [--gap 4] [--markers] [--limit N]
+cargo solar mwl-export <rom> <level> <out.mwl> | mwl-import <rom> <out.sfc> <in.mwl> [--level N] | mwl-info <in.mwl> | export-all <rom> <dir> | import-all <rom> <out> <dir>
 cargo solar ips-apply <patch.ips> <target> <out> [--header keep|add|strip] [--log]
 cargo solar ips-create <original> <modified> <out.ips> [--log]
 cargo solar ips-info <patch.ips> [--limit N]

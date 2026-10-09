@@ -6,6 +6,7 @@
 //! [`layout::LM_25X`] (see `docs/formats/lunar-magic-ext.md`).
 
 mod error;
+pub mod formats;
 pub mod gfx;
 pub mod gfx_bypass;
 pub mod layout;

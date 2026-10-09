@@ -32,6 +32,22 @@ const SP1: usize = 11;
 const SP2: usize = 10;
 const SP3: usize = 9;
 const SP4: usize = 8;
+/// Words 0–3: animation slot 2, layer 3 tiles, BG3, BG2 (from the `.mwl`
+/// format description, `docs/formats/mwl.md`; to be confirmed against a
+/// ROM with those slots set).
+const AN2: usize = 0;
+const LT3: usize = 1;
+const BG3: usize = 2;
+const BG2: usize = 3;
+/// Words 12–15: layer 3 GFX files LG4..LG1 (vanilla GFX2B, 2A, 29, 28).
+const LG4: usize = 12;
+
+/// The row Lunar Magic 3.71 exports for a level that has no bypass row:
+/// every slot "no file" except an unset SP4 and the vanilla layer 3 files.
+const DEFAULT_ROW: [u16; SLOT_COUNT] = [
+    NO_FILE, NO_FILE, NO_FILE, NO_FILE, NO_FILE, NO_FILE, NO_FILE, NO_FILE, UNSET, NO_FILE,
+    NO_FILE, NO_FILE, 0x2B, 0x2A, 0x29, 0x28,
+];
 
 /// One level's 16 bypass words.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -108,6 +124,24 @@ impl GfxBypass {
     #[must_use]
     pub const fn extra_words(&self) -> [u16; 4] {
         [self.words[0], self.words[1], self.words[2], self.words[3]]
+    }
+
+    /// `AN2`, `LT3`, `BG3`, `BG2` (slot names per the `.mwl` format).
+    #[must_use]
+    pub fn extra_files(&self) -> [Option<GfxId>; 4] {
+        [self.slot(AN2), self.slot(LT3), self.slot(BG3), self.slot(BG2)]
+    }
+
+    /// `LG4`..`LG1`, the layer 3 GFX files.
+    #[must_use]
+    pub fn layer3_files(&self) -> [Option<GfxId>; 4] {
+        [self.slot(LG4), self.slot(LG4 + 1), self.slot(LG4 + 2), self.slot(LG4 + 3)]
+    }
+
+    /// What Lunar Magic writes for a level without a bypass row.
+    #[must_use]
+    pub const fn default_row() -> Self {
+        Self { words: DEFAULT_ROW }
     }
 }
 
