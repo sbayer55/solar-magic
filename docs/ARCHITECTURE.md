@@ -45,17 +45,22 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 
 Every table address is read from a `smw_data::RomLayout` resolved once at open
 time. `RomLayout::detect` returns the vanilla layout, or, for a ROM carrying a
-Lunar Magic signature whose routines match the 2.5x fingerprints, the vanilla
-layout plus `lm: Some(LunarMagicTables)` (`docs/formats/lunar-magic-ext.md`).
-Any other Lunar Magic version is refused with the first missing fingerprint.
-Decoders never hardcode addresses; Lunar Magic-only behaviour is gated on
-`layout.lm` / `layout.object_format()`.
+Lunar Magic signature, the vanilla layout plus `lm: Some(LunarMagicTables)`
+(`docs/formats/lunar-magic-ext.md`). Detection is per feature: every known
+hijack site is checked independently (`scan_hijacks`, the `HIJACKS` table)
+and the result lands in `LunarMagicTables::features`; only the layer 2 hook
+and its call site are required, and the hook's variant fixes
+`Layer2FlagsFormat` (2.5x or 3.x). Decoders never hardcode addresses;
+Lunar Magic-only behaviour is gated on `layout.lm`, the feature flags and
+`layout.object_format()`.
 
-Done for Lunar Magic 2.5x: detection, level data (direct Map16 objects, 5-byte
-exits), 16-bit backgrounds, custom palettes, ExGFX and the per-level GFX
-bypass, Map16 pages 2+ (by running LM's getter in `w65c816`) and BG page
-sets. Open: the bypass table's extra slots (words 0–3, probably BG2/BG3/AN2),
-layer 3, sprites' graphics, and other LM versions.
+Done for Lunar Magic 2.5x and 3.71: detection, level data (direct Map16
+objects, 5-byte exits), 16-bit backgrounds, 3.x's rewritten background bank
+bytes and flag bits, custom palettes, ExGFX and the per-level GFX bypass,
+Map16 pages 2+ (by running LM's getter in `w65c816`) and BG page sets.
+Open: 3.x level-data additions (extended objects 01/03, sprite extension
+bytes, the new per-level tables), the bypass table's extra slots, layer 3,
+sprites' graphics, and LM-compatible saving.
 
 ## Editing and saving
 

@@ -13,6 +13,13 @@ pub const WRAM_LEN: usize = 0x2_0000;
 /// Canonical bus address of WRAM index 0 (`$7E:0000`).
 const WRAM_BASE: Addr = 0x7E_0000;
 
+/// First APU I/O port (`$2140`–`$2143`).
+const APU_PORT_BASE: u32 = 0x2140;
+/// What the SPC700 boot ROM shows on ports 0 and 1 while it waits for an
+/// upload; afterwards each port echoes the last byte the CPU wrote, which
+/// is what the game's upload loops wait for.
+const APU_READY: [u8; 4] = [0xAA, 0xBB, 0, 0];
+
 /// Every address a traced run touched (see [`SnesBus::enable_trace`]).
 /// WRAM addresses are canonical `$7E`/`$7F` ones, whichever mirror the code
 /// used; ROM addresses are the bus addresses as read.
@@ -85,6 +92,10 @@ pub struct SnesBus<'a> {
     overlays: Vec<Overlay>,
     hardware_writes: u64,
     trace: Option<Trace>,
+    apu: [u8; 4],
+    /// Whether the CPU has started the SPC handshake (first write to port 0);
+    /// until then the ports show the boot ROM's ready bytes.
+    apu_started: bool,
 }
 
 impl core::fmt::Debug for SnesBus<'_> {
@@ -99,7 +110,15 @@ impl<'a> SnesBus<'a> {
     /// Creates a bus over `rom` with zeroed WRAM.
     #[must_use]
     pub fn new(rom: &'a Rom) -> Self {
-        Self { rom, wram: vec![0; WRAM_LEN], overlays: Vec::new(), hardware_writes: 0, trace: None }
+        Self {
+            rom,
+            wram: vec![0; WRAM_LEN],
+            overlays: Vec::new(),
+            hardware_writes: 0,
+            trace: None,
+            apu: APU_READY,
+            apu_started: false,
+        }
     }
 
     /// Starts recording every access into a [`Trace`]. Call it before
@@ -135,6 +154,43 @@ impl<'a> SnesBus<'a> {
     #[must_use]
     pub fn wram_at(&self, addr: Addr) -> Option<u8> {
         wram_index(addr).and_then(|i| self.wram.get(i).copied())
+    }
+
+    /// Reads a byte the way the CPU would (WRAM, overlays, then ROM), without
+    /// recording it in the trace. Hardware registers and unmapped addresses
+    /// read as 0.
+    #[must_use]
+    pub fn peek(&self, addr: Addr) -> u8 {
+        if let Some(v) = self.wram_at(addr) {
+            return v;
+        }
+        if is_hardware(addr) {
+            return 0;
+        }
+        if let Some(v) = self.overlays.iter().find_map(|o| o.get(addr)) {
+            return v;
+        }
+        SnesAddr::new(addr & 0xFF_FFFF)
+            .and_then(|a| self.rom.pc(a).ok())
+            .and_then(|pc| self.rom.bytes().get(pc).copied())
+            .unwrap_or(0)
+    }
+
+    /// Reads a little-endian 16-bit value with [`SnesBus::peek`].
+    #[must_use]
+    pub fn peek_u16(&self, addr: Addr) -> u16 {
+        u16::from_le_bytes([self.peek(addr), self.peek(addr.wrapping_add(1))])
+    }
+
+    /// Reads a little-endian 24-bit value with [`SnesBus::peek`].
+    #[must_use]
+    pub fn peek_u24(&self, addr: Addr) -> u32 {
+        u32::from_le_bytes([
+            self.peek(addr),
+            self.peek(addr.wrapping_add(1)),
+            self.peek(addr.wrapping_add(2)),
+            0,
+        ])
     }
 
     /// Reads a 24-bit little-endian value from WRAM.
@@ -211,7 +267,8 @@ impl Bus for SnesBus<'_> {
             if let Some(trace) = self.trace.as_mut() {
                 trace.note_hardware(addr, false);
             }
-            return 0;
+            let ports = if self.apu_started { &self.apu } else { &APU_READY };
+            return apu_port(addr).and_then(|i| ports.get(i).copied()).unwrap_or(0);
         }
         if let Some(trace) = self.trace.as_mut() {
             trace.rom_reads.insert(addr & 0xFF_FFFF);
@@ -235,11 +292,28 @@ impl Bus for SnesBus<'_> {
             }
         } else if is_hardware(addr) {
             self.hardware_writes = self.hardware_writes.saturating_add(1);
+            if let Some(port) = apu_port(addr) {
+                if port == 0 {
+                    self.apu_started = true;
+                }
+                if let Some(slot) = self.apu.get_mut(port) {
+                    *slot = value;
+                }
+            }
             if let Some(trace) = self.trace.as_mut() {
                 trace.note_hardware(addr, true);
             }
         }
     }
+}
+
+/// Which APU port (0–3) a hardware address is, if any.
+fn apu_port(addr: Addr) -> Option<usize> {
+    let offset = addr & 0xFFFF;
+    (APU_PORT_BASE..APU_PORT_BASE.saturating_add(4))
+        .contains(&offset)
+        .then(|| usize::try_from(offset.wrapping_sub(APU_PORT_BASE)).ok())
+        .flatten()
 }
 
 #[cfg(test)]
@@ -283,6 +357,27 @@ mod tests {
         assert_eq!(trace.hardware.get(&0x00_2100), Some(&(0, 1)));
         assert_eq!(trace.rom_reads, std::iter::once(0x05_8000).collect());
         assert!(bus.take_trace().is_none());
+    }
+
+    #[test]
+    fn apu_ports_echo_writes() {
+        let mut image = vec![0xEAu8; 0x1_0000];
+        let header = *b"SUPER MARIOWORLD     ";
+        image.get_mut(0x7FC0..0x7FD5).expect("in range").copy_from_slice(&header);
+        image
+            .get_mut(0x7FD5..0x7FE0)
+            .expect("in range")
+            .copy_from_slice(&[0x20, 0x02, 0x06, 0x01, 0x01, 0x01, 0x00, 0xFF, 0xFF, 0x00, 0x00]);
+        let rom = snes_rom::Rom::from_bytes(image).expect("minimal rom");
+        let mut bus = SnesBus::new(&rom);
+        assert_eq!((bus.read(0x00_2140), bus.read(0x00_2141)), (0xAA, 0xBB));
+        bus.write(0x00_2141, 0x01);
+        assert_eq!(bus.read(0x00_2141), 0xBB, "data written before the handshake is not echoed");
+        bus.write(0x00_2140, 0x42);
+        assert_eq!(bus.read(0x00_2140), 0x42);
+        assert_eq!(bus.read(0x00_2141), 0x01);
+        assert_eq!(bus.read(0x80_2143), 0);
+        assert_eq!(bus.read(0x00_2100), 0, "other registers still read 0");
     }
 
     #[test]

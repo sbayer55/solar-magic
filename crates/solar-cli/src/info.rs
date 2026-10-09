@@ -101,6 +101,8 @@ fn print_lunar_magic_summary(rom: &Rom, layout: &RomLayout) -> anyhow::Result<()
         })
         .count();
     println!("  signature:     {:?}", RomLayout::lunar_magic_signature(rom).unwrap_or_default());
+    println!("  features:      {}", lm.features.names().join(" "));
+    println!("  flags format:  {:?}", lm.layer2_flags_format);
     println!("  relocated layer 2 tilemaps: {relocated} ({sixteen_bit} 16-bit)");
     println!("  custom palettes: {palettes}");
     println!("  ExGFX 80-FF inserted: {exgfx}");

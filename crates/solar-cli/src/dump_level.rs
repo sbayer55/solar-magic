@@ -107,9 +107,10 @@ fn print_headers(rom: &Rom, layout: &RomLayout, level: &Level) -> anyhow::Result
     }
     if let Some(lm) = &level.lm {
         println!(
-            "  lunar magic: flags {:#04X} (relocated tilemap: {}, 16-bit: {}, page {})  custom palette: {}  secondary 4-6: {:02X?}",
+            "  lunar magic: flags {:#04X} ({:?}; tilemap: {}, 16-bit: {}, page {})  custom palette: {}  secondary 4-6: {:02X?}",
             lm.flags.0,
-            lm.flags.relocated_tilemap(),
+            lm.format,
+            lm.has_tilemap(),
             lm.flags.sixteen_bit(),
             lm.flags.page(),
             lm.custom_palette.map_or_else(|| "none".to_owned(), |a| a.to_string()),
