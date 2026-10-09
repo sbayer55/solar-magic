@@ -26,5 +26,5 @@ The encoder (`compress`) is greedy: at each position it takes the longest of
 byte fill, word fill, increasing fill or repeat when that is cheaper than
 copying the bytes directly, and otherwise extends a direct-copy run (split at
 1024 bytes). Repeats search the whole 64 KiB window and may overlap the
-write position. `solar gfx check` confirms every vanilla file re-encodes to
+write position. `solar gfx-check` confirms every vanilla file re-encodes to
 no more than its stored size and decodes identically.

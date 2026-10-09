@@ -6,7 +6,7 @@ use smw_data::{LevelId, RomLayout};
 use snes_rom::{Rom, RomError, SnesAddr};
 use w65c816::{Addr, Cpu, CpuError};
 
-use crate::emu::{Overlay, SnesBus};
+use crate::emu::{Overlay, SnesBus, Trace};
 use crate::ownership::{AttributedBus, Ownership};
 
 /// Rows of tiles per screen in a horizontal level.
@@ -164,9 +164,78 @@ pub fn load_level_data(
     layout: &RomLayout,
     level: Level,
 ) -> Result<LoadedLevel, LoadError> {
+    load_level_with(rom, layout, level, false).map(|(loaded, _)| loaded)
+}
+
+/// [`load_level_data`] with the bus recording every access, for reverse
+/// engineering what a (patched) loader reads and writes.
+///
+/// # Errors
+///
+/// See [`LoadError`].
+pub fn load_level_data_traced(
+    rom: &Rom,
+    layout: &RomLayout,
+    level: Level,
+) -> Result<(LoadedLevel, Trace), LoadError> {
+    let (loaded, trace) = load_level_with(rom, layout, level, true)?;
+    Ok((loaded, trace.unwrap_or_default()))
+}
+
+fn load_level_with(
+    rom: &Rom,
+    layout: &RomLayout,
+    level: Level,
+    record: bool,
+) -> Result<(LoadedLevel, Option<Trace>), LoadError> {
     let vertical = level.vertical;
     let loader = &layout.loader;
     let mut inner = SnesBus::new(rom);
+    if record {
+        inner.enable_trace();
+    }
+    let layer2_addr = seed_bus(&mut inner, layout, &level);
+    let mut bus = AttributedBus::new(inner, &level, OVERLAY_LAYER1, layer2_addr);
+    let mut cpu = Cpu::new();
+    cpu.brk_is_fatal = true;
+    cpu.call_long(&mut bus, loader.entry.get(), SENTINEL, STEP_BUDGET)?;
+    let trace = bus.inner_mut().take_trace();
+
+    let screens = usize::from(level.header.screens());
+    let mode = level.header.level_mode().get();
+    let shape1 = GridShape { layer: Layer::One, mode, screens, vertical };
+    let shape2 = GridShape { layer: Layer::Two, mode, screens, vertical };
+    let layer1 = read_grid(rom, layout, bus.inner(), shape1)?;
+    let owners1 = read_cells(rom, layout, shape1, |lo, _| Some(bus.owner_at(Layer::One, lo)))?;
+    let (layer2, owners2, background, background_rows) = match level.layer2 {
+        Layer2::Objects { .. } => (
+            Some(read_grid(rom, layout, bus.inner(), shape2)?),
+            Some(read_cells(rom, layout, shape2, |lo, _| Some(bus.owner_at(Layer::Two, lo)))?),
+            None,
+            0,
+        ),
+        Layer2::Background { rows_per_screen, .. } => {
+            (None, None, Some(read_background(layout, bus.inner())), rows_per_screen)
+        }
+    };
+    let ownership = Ownership::new(owners1, owners2);
+    let result = LoadedLevel {
+        level,
+        vertical,
+        layer1,
+        layer2,
+        background,
+        background_rows,
+        ownership,
+        steps: cpu.steps,
+    };
+    Ok((result, trace))
+}
+
+/// Overlays the level's bytes on the bus and seeds the RAM the loader
+/// expects. Returns the bus address of the layer 2 data.
+fn seed_bus(inner: &mut SnesBus<'_>, layout: &RomLayout, level: &Level) -> Addr {
+    let loader = &layout.loader;
     let layer1_bytes = level.layer1_bytes();
     let layer2_bytes = level.layer2_bytes();
     let lm_relocated = level.lm.is_some_and(|info| info.flags.relocated_tilemap());
@@ -202,40 +271,7 @@ pub fn load_level_data(
     inner.set_wram(loader.ram_game_mode, GAME_MODE_SKIP_SPRITES);
     inner.set_wram_u16(loader.ram_level_number, level.id.get());
     inner.set_wram_u16(loader.ram_level_number_copy, level.id.get());
-
-    let mut bus = AttributedBus::new(inner, &level, OVERLAY_LAYER1, layer2_addr);
-    let mut cpu = Cpu::new();
-    cpu.brk_is_fatal = true;
-    cpu.call_long(&mut bus, loader.entry.get(), SENTINEL, STEP_BUDGET)?;
-
-    let screens = usize::from(level.header.screens());
-    let mode = level.header.level_mode().get();
-    let shape1 = GridShape { layer: Layer::One, mode, screens, vertical };
-    let shape2 = GridShape { layer: Layer::Two, mode, screens, vertical };
-    let layer1 = read_grid(rom, layout, bus.inner(), shape1)?;
-    let owners1 = read_cells(rom, layout, shape1, |lo, _| Some(bus.owner_at(Layer::One, lo)))?;
-    let (layer2, owners2, background, background_rows) = match level.layer2 {
-        Layer2::Objects { .. } => (
-            Some(read_grid(rom, layout, bus.inner(), shape2)?),
-            Some(read_cells(rom, layout, shape2, |lo, _| Some(bus.owner_at(Layer::Two, lo)))?),
-            None,
-            0,
-        ),
-        Layer2::Background { rows_per_screen, .. } => {
-            (None, None, Some(read_background(layout, bus.inner())), rows_per_screen)
-        }
-    };
-    let ownership = Ownership::new(owners1, owners2);
-    Ok(LoadedLevel {
-        level,
-        vertical,
-        layer1,
-        layer2,
-        background,
-        background_rows,
-        ownership,
-        steps: cpu.steps,
-    })
+    layer2_addr
 }
 
 /// Geometry of the tile RAM for one layer of one level.

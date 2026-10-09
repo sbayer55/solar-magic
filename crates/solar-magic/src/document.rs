@@ -1,12 +1,9 @@
 //! The open ROM, the level being edited, and the rendered scene.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
-use smw_data::level::{
-    EditError, ExitId, Level, SaveOptions, SaveReport, SecondaryExit, save_level,
-};
+use smw_data::level::{EditError, Level, SaveOptions, SaveReport, save_level};
 use smw_data::{LevelId, RomLayout};
 use smw_render::scene::{LevelScene, RenderOptions};
 use snes_rom::Rom;
@@ -33,8 +30,6 @@ pub(crate) struct Document {
     pub(crate) map16_texture: Option<egui::TextureHandle>,
     /// Options the current texture was rendered with.
     pub(crate) rendered_with: Option<RenderOptions>,
-    /// Secondary exits edited but not yet written to the ROM.
-    pub(crate) pending_exits: BTreeMap<ExitId, SecondaryExit>,
     /// Last message for the status bar.
     pub(crate) status: String,
 }
@@ -67,7 +62,6 @@ impl Document {
             texture: None,
             map16_texture: None,
             rendered_with: None,
-            pending_exits: BTreeMap::new(),
             status: String::new(),
         };
         doc.select(level);
@@ -101,7 +95,6 @@ impl Document {
     /// Whether the session has unsaved edits.
     pub(crate) fn is_dirty(&self) -> bool {
         self.session.as_ref().is_some_and(|s| s.history.is_dirty())
-            || !self.pending_exits.is_empty()
     }
 
     /// Applies a command (optionally merged into history `group`), keeping
@@ -142,7 +135,7 @@ impl Document {
     /// Undoes the last command.
     pub(crate) fn undo(&mut self) {
         if let Some(session) = self.session.as_mut()
-            && let Some(label) = session.history.undo(&mut session.level)
+            && let Some(label) = session.undo()
         {
             session.selection.clear();
             self.status = format!("undid {label}");
@@ -153,7 +146,7 @@ impl Document {
     /// Redoes the last undone command.
     pub(crate) fn redo(&mut self) {
         if let Some(session) = self.session.as_mut()
-            && let Some(label) = session.history.redo(&mut session.level)
+            && let Some(label) = session.redo()
         {
             session.selection.clear();
             self.status = format!("redid {label}");
@@ -167,8 +160,8 @@ impl Document {
         self.rom.len() < SaveOptions::default().expand_to
     }
 
-    /// Writes the edited level (and pending secondary exits) into a copy of
-    /// the ROM, saves it to `path`, and makes that the document's ROM.
+    /// Writes the edited level and its secondary exits into a copy of the
+    /// ROM, saves it to `path`, and makes that the document's ROM.
     pub(crate) fn save_to(&mut self, path: &Path) -> anyhow::Result<Option<SaveReport>> {
         let mut rom = self.rom.clone();
         let report = match &self.session {
@@ -178,16 +171,15 @@ impl Document {
             ),
             None => None,
         };
-        for (id, exit) in &self.pending_exits {
-            exit.write(&mut rom, &self.layout, *id).context("writing secondary exit")?;
-        }
-        if report.is_none() && !self.pending_exits.is_empty() {
+        if let Some(session) = &self.session {
+            for (id, exit) in &session.exits {
+                exit.write(&mut rom, &self.layout, *id).context("writing secondary exit")?;
+            }
             rom.fix_checksum();
         }
         rom.save(path).with_context(|| format!("writing {}", path.display()))?;
         self.rom = rom;
         path.clone_into(&mut self.path);
-        self.pending_exits.clear();
         if let Some(session) = self.session.as_mut() {
             session.history.mark_saved();
             // Refresh the addresses the level was loaded from.
@@ -200,7 +192,6 @@ impl Document {
 
     /// Drops all edits and reloads the level from the ROM.
     pub(crate) fn revert(&mut self) {
-        self.pending_exits.clear();
         self.select(self.level);
     }
 

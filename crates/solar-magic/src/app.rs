@@ -46,6 +46,9 @@ pub(crate) struct ViewState {
     pub(crate) show_entrances: bool,
     /// Counter for drag history groups.
     pub(crate) drag_group: u64,
+    /// The tile the pointer was last over in the level view: where Paste puts
+    /// the clipboard's top-left item.
+    pub(crate) last_hovered: Option<TilePos>,
 }
 
 impl Default for ViewState {
@@ -58,6 +61,7 @@ impl Default for ViewState {
             show_exits: true,
             show_entrances: true,
             drag_group: 0,
+            last_hovered: None,
         }
     }
 }
@@ -260,7 +264,7 @@ impl App {
                 let Some(session) = doc.session.as_ref() else {
                     return;
                 };
-                let at = TilePos::new(0, 0);
+                let at = self.view.last_hovered.unwrap_or(TilePos::new(0, 0));
                 for command in session.clipboard.paste_commands(at) {
                     doc.apply(command, None);
                 }

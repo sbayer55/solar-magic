@@ -85,6 +85,9 @@ impl Viewer<'_> {
                 handle_pointer(scene, session, view, &pointer, &mut actions);
             });
         ui.data_mut(|d| d.insert_persisted(rect_id, scene_rect));
+        if hovered.is_some() {
+            view.last_hovered = hovered;
+        }
         let status = hovered.map(|t| describe_tile(scene, session, t)).unwrap_or_default();
         ui.data_mut(|d| d.insert_temp(egui::Id::new("status_text"), status));
         self.actions.append(&mut actions);

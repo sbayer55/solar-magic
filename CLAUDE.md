@@ -23,6 +23,7 @@ cargo solar dump-owners "roms/Super Mario World (USA).sfc" 105
 cargo solar expand <rom> <out> --size 1M        # also: free-space, rats, bg-rle, gfx-check
 cargo solar relocate-level <rom> <out> 105      # also: copy-level, apply-level (from dump-level --json)
 cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> [--layers one|two|all]
+cargo solar trace "roms/Super Mario World (USA).sfc" level:105 | 04:DC57 [--ram 0E=105] [--gap 8]
 cargo solar ips-apply <patch.ips> <target> <out> [--header keep|add|strip] [--log]
 cargo solar ips-create <original> <modified> <out.ips> [--log]
 cargo solar ips-info <patch.ips> [--limit N]
