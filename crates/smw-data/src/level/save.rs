@@ -271,9 +271,14 @@ impl<'a> Saver<'a> {
         })
     }
 
-    /// Whether only this level points at `addr`.
+    /// Whether only this level points at `addr`. Backgrounds are keyed by
+    /// their stored `$FF`-bank pointer, so both spellings are checked.
     fn unshared(&self, addr: SnesAddr) -> bool {
-        self.refs.get(&addr).is_none_or(|ids| ids.iter().all(|id| *id == self.level.id))
+        let mine = |ids: &Vec<LevelId>| ids.iter().all(|id| *id == self.level.id);
+        let stored = (addr.bank() == LAYER2_BACKGROUND_REAL_BANK)
+            .then(|| SnesAddr::from_parts(LAYER2_BACKGROUND_BANK, addr.offset()));
+        self.refs.get(&addr).is_none_or(mine)
+            && stored.and_then(|s| self.refs.get(&s)).is_none_or(mine)
     }
 
     /// Whether the bytes at `addr` already equal `bytes`.
@@ -686,6 +691,31 @@ mod tests {
         let final_level = Level::load(&rom, &layout, id).expect("reloads");
         assert_eq!(final_level.sprite_bytes(), bigger.sprite_bytes());
         assert!(rom.checksum_matches());
+    }
+
+    /// A re-encoded background must not overwrite the vanilla block that
+    /// hundreds of levels share, even though the tiles are unchanged.
+    #[test]
+    fn real_rom_background_rewrite_never_touches_the_shared_block() {
+        let Some(mut rom) = rom() else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let layout = RomLayout::detect(&rom).expect("vanilla");
+        let id = LevelId::new(0x105).expect("valid");
+        let mut level = Level::load(&rom, &layout, id).expect("loads");
+        let shared_pc = rom.pc(level.addresses.layer2).expect("mapped");
+        let before = rom.bytes().get(shared_pc..shared_pc + 0x200).expect("in range").to_vec();
+        // A compressible edit (every tile blank) that bank $0C's free space can hold.
+        for index in 0..0x400 {
+            level.layer2.set_background_tile(index, 0x25).expect("background");
+        }
+        assert_ne!(level.layer2_bytes(), before[..level.layer2_bytes().len()].to_vec());
+        let report = save_level(&mut rom, &layout, &level, &SaveOptions::default()).expect("saves");
+        assert!(!matches!(report.layer2, Placement::InPlace(_)), "{:?}", report.layer2);
+        assert_eq!(rom.bytes().get(shared_pc..shared_pc + 0x200).expect("in range"), &before[..]);
+        let reloaded = Level::load(&rom, &layout, id).expect("reloads");
+        assert_eq!(reloaded.layer2_bytes(), level.layer2_bytes());
     }
 
     #[test]

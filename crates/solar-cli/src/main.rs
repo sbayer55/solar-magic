@@ -20,6 +20,7 @@ mod ips_apply;
 mod ips_create;
 mod ips_info;
 mod level_io;
+mod mwl;
 mod png;
 mod render;
 mod trace;
@@ -171,6 +172,52 @@ enum Command {
         /// e.g. `00BAD8:0BF6:60` (what a patched init would have done).
         #[arg(long = "copy")]
         copy: Vec<String>,
+    },
+    /// Write a level as a Lunar Magic `.mwl` file.
+    MwlExport {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Level number in hex (000-1FF).
+        #[arg(value_parser = parse_hex_u16)]
+        level: u16,
+        /// Output `.mwl` path.
+        out: PathBuf,
+    },
+    /// Import a `.mwl` file into a level slot and write the ROM to `out`.
+    MwlImport {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Output ROM path.
+        out: PathBuf,
+        /// The `.mwl` file.
+        file: PathBuf,
+        /// Level slot in hex; default is the level number recorded in the file.
+        #[arg(long, value_parser = parse_hex_u16)]
+        level: Option<u16>,
+    },
+    /// Print what a `.mwl` file contains.
+    MwlInfo {
+        /// The `.mwl` file.
+        file: PathBuf,
+    },
+    /// Export every level as `<prefix><level>.mwl` into a directory.
+    ExportAll {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Output directory (created if missing).
+        dir: PathBuf,
+        /// File name prefix.
+        #[arg(long, default_value = "level ")]
+        prefix: String,
+    },
+    /// Import every `.mwl` in a directory into the levels they name.
+    ImportAll {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Output ROM path.
+        out: PathBuf,
+        /// Directory of `.mwl` files.
+        dir: PathBuf,
     },
     /// Print secondary exits (all non-blank ones, or a single one).
     DumpExits {
@@ -324,6 +371,11 @@ fn main() -> ExitCode {
         Command::RelocateLevel { rom, out, level } => level_io::relocate(&rom, &out, level),
         Command::CopyLevel { rom, out, src, dst } => level_io::copy(&rom, &out, src, dst),
         Command::DumpExits { rom, exit } => dump_exits::run(&rom, exit),
+        Command::MwlExport { rom, level, out } => mwl::export(&rom, level, &out),
+        Command::MwlImport { rom, out, file, level } => mwl::import(&rom, &out, &file, level),
+        Command::MwlInfo { file } => mwl::info(&file),
+        Command::ExportAll { rom, dir, prefix } => mwl::export_all(&rom, &dir, &prefix),
+        Command::ImportAll { rom, out, dir } => mwl::import_all(&rom, &out, &dir),
         Command::DiffRom { a, b, gap, markers, limit } => {
             diff_rom::run(&a, &b, &diff_rom::Options { gap, markers, limit })
         }
