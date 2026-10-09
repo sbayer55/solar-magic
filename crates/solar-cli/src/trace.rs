@@ -33,6 +33,12 @@ pub(crate) struct Options {
     pub(crate) x8: bool,
     /// Hide ROM ranges a known table accounts for.
     pub(crate) unknown_only: bool,
+    /// WRAM regions to hex-dump after the run, as `addr:len`.
+    pub(crate) dump: Vec<String>,
+    /// Run until this address instead of calling the target as a subroutine.
+    pub(crate) stop: Option<String>,
+    /// ROM-to-WRAM copies to perform before the run, as `rom:ram:len`.
+    pub(crate) copy: Vec<String>,
 }
 
 /// Runs the trace and prints the report.
@@ -42,7 +48,7 @@ pub(crate) fn run(path: &Path, opts: &Options) -> anyhow::Result<()> {
     if let Some(note) = note {
         println!("note: {note}");
     }
-    let trace = if let Some(level) = opts.target.strip_prefix("level:") {
+    let (trace, wram) = if let Some(level) = opts.target.strip_prefix("level:") {
         if !layout.is_lunar_magic() && RomLayout::lunar_magic_signature(&rom).is_some() {
             bail!("level loads need a supported layout; this Lunar Magic version is not");
         }
@@ -52,23 +58,59 @@ pub(crate) fn run(path: &Path, opts: &Options) -> anyhow::Result<()> {
     };
     let known = layout.known_ranges(&rom);
     print_trace(&trace, opts.gap, &known, opts.unknown_only);
+    for region in &opts.dump {
+        dump_wram(&wram, region)?;
+    }
     Ok(())
 }
 
-fn trace_level(rom: &Rom, layout: &RomLayout, level: &str) -> anyhow::Result<Trace> {
+/// WRAM after a run (`$7E:0000` is index 0).
+type Wram = Vec<u8>;
+
+fn trace_level(rom: &Rom, layout: &RomLayout, level: &str) -> anyhow::Result<(Trace, Wram)> {
     let number = parse_hex(level)?;
     let id = LevelId::new(u16::try_from(number).unwrap_or(u16::MAX))
         .with_context(|| format!("level {number:#X} is out of range"))?;
     let parsed = Level::load(rom, layout, id)?;
-    let (loaded, trace) = load_level_data_traced(rom, layout, parsed)?;
-    println!("level {id}: loader ran {} instructions", loaded.steps);
-    Ok(trace)
+    let run = load_level_data_traced(rom, layout, parsed)?;
+    println!("level {id}: loader ran {} instructions", run.loaded.steps);
+    Ok((run.trace, run.wram))
 }
 
-fn trace_routine(rom: &Rom, opts: &Options) -> anyhow::Result<Trace> {
+/// Prints `len` WRAM bytes from `addr` (both hex, `addr:len`), 16 per row.
+fn dump_wram(wram: &[u8], region: &str) -> anyhow::Result<()> {
+    let (addr, len) =
+        region.split_once(':').with_context(|| format!("{region:?} is not addr:len"))?;
+    let (addr, len) = (parse_hex(addr)?, parse_hex(len)?);
+    let start = usize::try_from(addr & 0x1_FFFF).unwrap_or(0);
+    let bytes = wram.get(start..start.saturating_add(usize::try_from(len).unwrap_or(0)));
+    let bytes = bytes.with_context(|| format!("{region:?} is outside WRAM"))?;
+    println!("WRAM {}:", snes(0x7E_0000 | (addr & 0x1_FFFF)));
+    for (i, row) in bytes.chunks(16).enumerate() {
+        let hex: Vec<String> = row.iter().map(|b| format!("{b:02X}")).collect();
+        let at = (addr & 0x1_FFFF).saturating_add(u32::try_from(i).unwrap_or(0).saturating_mul(16));
+        println!("  {}  {}", snes(0x7E_0000 | at), hex.join(" "));
+    }
+    Ok(())
+}
+
+fn trace_routine(rom: &Rom, opts: &Options) -> anyhow::Result<(Trace, Wram)> {
     let target = parse_hex(&opts.target)?;
     let mut bus = SnesBus::new(rom);
     bus.enable_trace();
+    for copy in &opts.copy {
+        let mut parts = copy.split(':');
+        let (Some(src), Some(dst), Some(len), None) =
+            (parts.next(), parts.next(), parts.next(), parts.next())
+        else {
+            bail!("{copy:?} is not rom:ram:len");
+        };
+        let (src, dst, len) = (parse_hex(src)?, parse_hex(dst)?, parse_hex(len)?);
+        for i in 0..len {
+            let byte = bus.peek(src.wrapping_add(i));
+            bus.set_wram(dst.wrapping_add(i), byte);
+        }
+    }
     for seed in &opts.ram {
         let (addr, value) =
             seed.split_once('=').with_context(|| format!("{seed:?} is not addr=value"))?;
@@ -88,13 +130,23 @@ fn trace_routine(rom: &Rom, opts: &Options) -> anyhow::Result<Trace> {
     cpu.brk_is_fatal = true;
     cpu.p.m = opts.m8;
     cpu.p.x = opts.x8;
-    let result = cpu.call_long(&mut bus, target, SENTINEL, opts.steps);
+    let result = match &opts.stop {
+        Some(stop) => {
+            let stop = parse_hex(stop)?;
+            cpu.pb = u8::try_from((target >> 16) & 0xFF).unwrap_or(0);
+            cpu.pc = u16::try_from(target & 0xFFFF).unwrap_or(0);
+            cpu.run_until(&mut bus, stop, opts.steps)
+        }
+        None => cpu.call_long(&mut bus, target, SENTINEL, opts.steps),
+    };
     println!("routine {}: ran {} instructions", snes(target), cpu.steps);
     match result {
+        Ok(()) if opts.stop.is_some() => println!("reached the stop address"),
         Ok(()) => println!("returned to the caller"),
         Err(err) => println!("stopped early: {err} (at {})", snes(cpu.pc24())),
     }
-    bus.take_trace().context("tracing was enabled")
+    let trace = bus.take_trace().context("tracing was enabled")?;
+    Ok((trace, bus.wram().to_vec()))
 }
 
 fn print_trace(trace: &Trace, gap: u32, known: &[KnownRange], unknown_only: bool) {

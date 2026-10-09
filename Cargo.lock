@@ -3719,6 +3719,7 @@ dependencies = [
 name = "smw-data"
 version = "0.1.0"
 dependencies = [
+ "bitflags 2.13.2",
  "lc-lz2",
  "serde",
  "snes-rom",

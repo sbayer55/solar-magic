@@ -260,7 +260,8 @@ pub const PAGE_SET_TILES: usize = 0x1000;
 ///
 /// [`Map16Error::NoSuchPageSet`] or ROM read failures.
 pub fn load_bg_set(rom: &Rom, layout: &RomLayout, set: u8) -> Result<Map16Set, Map16Error> {
-    let Some(lm) = &layout.lm else {
+    let lm = layout.lm.filter(|lm| lm.features.contains(crate::LmFeatures::BG_PAGE_SETS));
+    let Some(lm) = lm else {
         return if set == 0 { load_bg(rom, layout) } else { Err(Map16Error::NoSuchPageSet(set)) };
     };
     let entry = advance(lm.bg_page_sets, u32::from(set).saturating_mul(3))?;
@@ -268,7 +269,13 @@ pub fn load_bg_set(rom: &Rom, layout: &RomLayout, set: u8) -> Result<Map16Set, M
     let base = SnesAddr::new(ptr)
         .filter(|_| ptr != 0 && ptr != 0xFF_FFFF)
         .ok_or(Map16Error::NoSuchPageSet(set))?;
-    let count = rats_bounded_count(rom, base).min(PAGE_SET_TILES);
+    // Lunar Magic 3.x points set 0 at the vanilla table until a BG page is
+    // edited; that table is untagged and exactly 512 tiles.
+    let count = if base == layout.map16.bg_tiles {
+        TILES_PER_SET
+    } else {
+        rats_bounded_count(rom, base).min(PAGE_SET_TILES)
+    };
     let mut src = base;
     let mut tiles = Vec::with_capacity(count);
     for _ in 0..count {
@@ -278,16 +285,17 @@ pub fn load_bg_set(rom: &Rom, layout: &RomLayout, set: u8) -> Result<Map16Set, M
     Ok(Map16Set { tiles })
 }
 
-/// How many 8-byte tiles fit in the RATS block starting at `data`, or in
-/// the ROM if the block is untagged.
+/// How many 8-byte tiles fit in the RATS block starting at `data`, or up
+/// to the end of its bank if the block is untagged.
 fn rats_bounded_count(rom: &Rom, data: SnesAddr) -> usize {
     let Ok(pc) = rom.pc(data) else {
         return 0;
     };
+    let bank_remaining = usize::from(u16::MAX.wrapping_sub(data.offset())).saturating_add(1);
     let len = pc
         .checked_sub(snes_rom::rats::TAG_LEN)
         .and_then(|tag_pc| snes_rom::rats::RatsTag::parse_at(rom.bytes(), tag_pc))
-        .map_or_else(|| rom.len().saturating_sub(pc), |tag| tag.data_len);
+        .map_or_else(|| rom.len().saturating_sub(pc).min(bank_remaining), |tag| tag.data_len);
     len / TILE_BYTES_USIZE
 }
 

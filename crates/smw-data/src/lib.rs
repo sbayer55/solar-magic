@@ -16,5 +16,8 @@ pub mod palette;
 pub mod tileset;
 
 pub use error::LayoutError;
-pub use layout::{EntranceTables, FreeRange, LayoutKind, LunarMagicTables, RomLayout};
+pub use layout::{
+    EntranceTables, FreeRange, Layer2FlagsFormat, LayoutKind, LmFeatures, LunarMagicTables,
+    RomLayout,
+};
 pub use level_id::LevelId;

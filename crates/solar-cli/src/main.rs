@@ -160,6 +160,17 @@ enum Command {
         /// Only print ROM ranges that no known table accounts for.
         #[arg(long)]
         unknown_only: bool,
+        /// After the run, hex-dump WRAM at `addr:len` (hex), e.g. `0BF6:100`.
+        #[arg(long = "dump")]
+        dump: Vec<String>,
+        /// Routine mode: jump to the target (no `JSL`) and stop when the
+        /// program counter reaches this address instead of on return.
+        #[arg(long)]
+        stop: Option<String>,
+        /// Before the run, copy ROM bytes into WRAM: `rom:ram:len` in hex,
+        /// e.g. `00BAD8:0BF6:60` (what a patched init would have done).
+        #[arg(long = "copy")]
+        copy: Vec<String>,
     },
     /// Print secondary exits (all non-blank ones, or a single one).
     DumpExits {
@@ -316,8 +327,10 @@ fn main() -> ExitCode {
         Command::DiffRom { a, b, gap, markers, limit } => {
             diff_rom::run(&a, &b, &diff_rom::Options { gap, markers, limit })
         }
-        Command::Trace { rom, target, ram, steps, gap, m8, x8, unknown_only } => {
-            trace::run(&rom, &trace::Options { target, ram, steps, gap, m8, x8, unknown_only })
+        Command::Trace { rom, target, ram, steps, gap, m8, x8, unknown_only, dump, stop, copy } => {
+            let opts =
+                trace::Options { target, ram, steps, gap, m8, x8, unknown_only, dump, stop, copy };
+            trace::run(&rom, &opts)
         }
         Command::Render { rom, level, out, layers, scale, sprites, owners } => {
             render::run(&rom, &out, render::Options { level, layers, scale, sprites, owners })

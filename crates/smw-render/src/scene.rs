@@ -343,3 +343,34 @@ pub const fn owner_color(index: u16) -> crate::Rgba8 {
 fn to_u32(v: usize) -> u32 {
     u32::try_from(v).unwrap_or(u32::MAX)
 }
+
+#[cfg(test)]
+mod tests {
+    use smw_data::{LevelId, RomLayout};
+
+    use super::{LevelScene, RenderOptions};
+
+    /// A Lunar Magic 3.x save that touched no level renders every probed
+    /// level exactly like the vanilla ROM it came from: the hijacks, the
+    /// rewritten layer 2 bank bytes and the new flag bits change nothing.
+    #[test]
+    fn lm3_unchanged_save_renders_like_vanilla() {
+        let (Some(vanilla), Some(lm3)) = (std::env::var_os("SMW_ROM"), std::env::var_os("LM3_ROM"))
+        else {
+            eprintln!("SMW_ROM or LM3_ROM not set; skipping");
+            return;
+        };
+        let vanilla = snes_rom::Rom::load(std::path::Path::new(&vanilla)).expect("loads");
+        let lm3 = snes_rom::Rom::load(std::path::Path::new(&lm3)).expect("loads");
+        let layout_v = RomLayout::detect(&vanilla).expect("vanilla");
+        let layout_3 = RomLayout::detect(&lm3).expect("lunar magic 3");
+        assert!(layout_3.is_lunar_magic());
+        let options = RenderOptions { sprites: true, ..RenderOptions::default() };
+        for number in [0x105u16, 0x001, 0x0C5, 0x0E8, 0x1F4] {
+            let id = LevelId::new(number).expect("valid");
+            let a = LevelScene::load(&vanilla, &layout_v, id).expect("vanilla scene");
+            let b = LevelScene::load(&lm3, &layout_3, id).expect("lm3 scene");
+            assert_eq!(a.render(options), b.render(options), "level {id} differs");
+        }
+    }
+}

@@ -34,7 +34,13 @@ RAM the routine expects before the call:
 | `$010B-$010C` | level number (Lunar Magic's copy) | the level number |
 
 Everything else starts zeroed. No hardware registers are written (the bus
-counts and ignores any). Yoshi's Island 2 takes ~115k instructions.
+counts and ignores any; the APU ports echo writes so upload loops terminate).
+Yoshi's Island 2 takes ~115k instructions.
+
+Lunar Magic 3.x additionally expects its level init to have filled the
+per-screen tile-RAM pointer tables at `$0BF6`/`$0C56` and the level height at
+`$13D7`; `smw_render` seeds them from the vanilla ROM tables for the
+vanilla-height case (`lunar-magic-ext.md`, "Lunar Magic 3.71").
 
 ## Reading the result
 
@@ -44,6 +50,8 @@ layout depends on the level mode and comes from the game's own tables:
 - `LoadBlkPtrs` (`$00:BEA8`): 2 words (layer 1, layer 2) → per-mode word table
   (`Ptrs00BDA8` / `Ptrs00BDE8`) → per-screen 24-bit RAM pointers (low bytes).
 - `LoadBlkTable2` (`$00:BEAC`): same for high bytes.
+- The per-screen tables are read through the bus, because Lunar Magic 3.x
+  relocates them into WRAM.
 
 | Level kind | Per-screen block | Layout |
 |---|---|---|

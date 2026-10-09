@@ -12,7 +12,7 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | Milestone | State |
 |---|---|
 | M0 ROM container, address mapping, header, RATS, layout seam, CI | done |
-| M8 Lunar Magic 2.5x ROMs: levels, backgrounds, palettes, ExGFX, Map16 pages | done |
+| M8 Lunar Magic 2.5x (and, since LM1, 3.71) ROMs: levels, backgrounds, palettes, ExGFX, Map16 pages | done |
 | M1 LC_LZ2, GFX and palette decoding (`solar dump-gfx`) | done |
 | M2 Map16 (`solar dump-map16`) | done |
 | M3 level headers, objects, sprites, layer 2 parse + 512-level round trip (`solar dump-level`) | done |
@@ -30,6 +30,7 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | G5 direct Map16 paint tool | pending (needs Lunar Magic's object format) |
 | Prep for Lunar Magic compatibility: `solar trace` (ROM/WRAM access tracing of any routine or level load), secondary exits in the undo stack, paste at the cursor, saved-block leak fixes | done |
 | LM0 reverse-engineering tooling: `solar diff-rom` (changed ranges labelled by table, RATS tag changes, Lunar Magic markers), labelled `trace` output, `RomLayout::known_ranges`, marker scanning in `info` | done |
+| LM1 version-agnostic Lunar Magic detection: per-feature hijack scan (`LmFeatures`), 2.5x and 3.x layer 2 flag formats; LM 3.71 ROMs open and render identically to vanilla | done |
 | Lunar Magic ROM compatibility, rendering fidelity (sprites, priority, layer 3), overworld | planned, see `docs/ARCHITECTURE.md` |
 | Tools: IPS patcher (`solar ips-apply` / `ips-create` / `ips-info`, GUI Tools → IPS Patcher) | done: Lunar IPS parity (RLE, expand/truncate, apply log, copier-header add/strip) |
 

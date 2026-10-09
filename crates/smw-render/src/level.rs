@@ -164,7 +164,18 @@ pub fn load_level_data(
     layout: &RomLayout,
     level: Level,
 ) -> Result<LoadedLevel, LoadError> {
-    load_level_with(rom, layout, level, false).map(|(loaded, _)| loaded)
+    load_level_with(rom, layout, level, false).map(|t| t.loaded)
+}
+
+/// A level load together with what the loader touched.
+#[derive(Debug)]
+pub struct TracedLoad {
+    /// The loaded level.
+    pub loaded: LoadedLevel,
+    /// Every access the loader made (empty when tracing was off).
+    pub trace: Trace,
+    /// WRAM after the loader ran (`$7E:0000` is index 0).
+    pub wram: Vec<u8>,
 }
 
 /// [`load_level_data`] with the bus recording every access, for reverse
@@ -177,17 +188,18 @@ pub fn load_level_data_traced(
     rom: &Rom,
     layout: &RomLayout,
     level: Level,
-) -> Result<(LoadedLevel, Trace), LoadError> {
-    let (loaded, trace) = load_level_with(rom, layout, level, true)?;
-    Ok((loaded, trace.unwrap_or_default()))
+) -> Result<TracedLoad, LoadError> {
+    load_level_with(rom, layout, level, true)
 }
 
+/// Runs the loader; returns the result, the trace (when recording) and the
+/// final WRAM image.
 fn load_level_with(
     rom: &Rom,
     layout: &RomLayout,
     level: Level,
     record: bool,
-) -> Result<(LoadedLevel, Option<Trace>), LoadError> {
+) -> Result<TracedLoad, LoadError> {
     let vertical = level.vertical;
     let loader = &layout.loader;
     let mut inner = SnesBus::new(rom);
@@ -199,18 +211,22 @@ fn load_level_with(
     let mut cpu = Cpu::new();
     cpu.brk_is_fatal = true;
     cpu.call_long(&mut bus, loader.entry.get(), SENTINEL, STEP_BUDGET)?;
-    let trace = bus.inner_mut().take_trace();
+    let trace = bus.inner_mut().take_trace().unwrap_or_default();
+    let wram = bus.inner().wram().to_vec();
 
     let screens = usize::from(level.header.screens());
     let mode = level.header.level_mode().get();
     let shape1 = GridShape { layer: Layer::One, mode, screens, vertical };
     let shape2 = GridShape { layer: Layer::Two, mode, screens, vertical };
-    let layer1 = read_grid(rom, layout, bus.inner(), shape1)?;
-    let owners1 = read_cells(rom, layout, shape1, |lo, _| Some(bus.owner_at(Layer::One, lo)))?;
+    let layer1 = read_grid(layout, bus.inner(), shape1)?;
+    let owners1 =
+        read_cells(layout, bus.inner(), shape1, |lo, _| Some(bus.owner_at(Layer::One, lo)))?;
     let (layer2, owners2, background, background_rows) = match level.layer2 {
         Layer2::Objects { .. } => (
-            Some(read_grid(rom, layout, bus.inner(), shape2)?),
-            Some(read_cells(rom, layout, shape2, |lo, _| Some(bus.owner_at(Layer::Two, lo)))?),
+            Some(read_grid(layout, bus.inner(), shape2)?),
+            Some(read_cells(layout, bus.inner(), shape2, |lo, _| {
+                Some(bus.owner_at(Layer::Two, lo))
+            })?),
             None,
             0,
         ),
@@ -229,7 +245,7 @@ fn load_level_with(
         ownership,
         steps: cpu.steps,
     };
-    Ok((result, trace))
+    Ok(TracedLoad { loaded: result, trace, wram })
 }
 
 /// Overlays the level's bytes on the bus and seeds the RAM the loader
@@ -238,7 +254,7 @@ fn seed_bus(inner: &mut SnesBus<'_>, layout: &RomLayout, level: &Level) -> Addr 
     let loader = &layout.loader;
     let layer1_bytes = level.layer1_bytes();
     let layer2_bytes = level.layer2_bytes();
-    let lm_relocated = level.lm.is_some_and(|info| info.flags.relocated_tilemap());
+    let lm_relocated = level.lm.is_some_and(|info| info.has_tilemap());
     let vanilla_bg_page = match &level.layer2 {
         Layer2::Background { tiles, .. } => {
             tiles.first().map_or(0, |t| usize::from(t.to_le_bytes()[1] & 1))
@@ -271,6 +287,19 @@ fn seed_bus(inner: &mut SnesBus<'_>, layout: &RomLayout, level: &Level) -> Addr 
     inner.set_wram(loader.ram_game_mode, GAME_MODE_SKIP_SPRITES);
     inner.set_wram_u16(loader.ram_level_number, level.id.get());
     inner.set_wram_u16(loader.ram_level_number_copy, level.id.get());
+    if let Some(lm) = &layout.lm {
+        // What Lunar Magic 3.x's level init would have left in WRAM.
+        for seed in lm.wram_seeds {
+            for i in 0..seed.len {
+                let i = u32::try_from(i).unwrap_or(0);
+                let byte = inner.peek(seed.rom.get().wrapping_add(i));
+                inner.set_wram(seed.ram.wrapping_add(i), byte);
+            }
+        }
+        if let Some((addr, height)) = lm.level_height {
+            inner.set_wram_u16(addr, height);
+        }
+    }
     layer2_addr
 }
 
@@ -302,12 +331,11 @@ impl GridShape {
 
 /// Reads a layer's tiles out of WRAM using the game's per-mode pointer tables.
 fn read_grid(
-    rom: &Rom,
     layout: &RomLayout,
     bus: &SnesBus<'_>,
     shape: GridShape,
 ) -> Result<TileGrid, LoadError> {
-    read_cells(rom, layout, shape, |lo, hi| {
+    read_cells(layout, bus, shape, |lo, hi| {
         Some(u16::from_le_bytes([bus.wram_at(lo)?, bus.wram_at(hi)?]))
     })
 }
@@ -315,16 +343,16 @@ fn read_grid(
 /// Builds a grid by asking `source` for the value behind each cell's tile-RAM
 /// low and high byte addresses.
 fn read_cells<T: Copy + Default>(
-    rom: &Rom,
     layout: &RomLayout,
+    bus: &SnesBus<'_>,
     shape: GridShape,
     source: impl Fn(u32, u32) -> Option<T>,
 ) -> Result<Grid<T>, LoadError> {
     let (rows, cols) = shape.screen_dims();
     let (width, height) = shape.grid_dims();
     let mut cells = vec![T::default(); width.saturating_mul(height)];
-    let low_ptrs = screen_pointers(rom, layout.loader.tile_ram_ptrs_low, shape)?;
-    let high_ptrs = screen_pointers(rom, layout.loader.tile_ram_ptrs_high, shape)?;
+    let low_ptrs = screen_pointers(bus, layout.loader.tile_ram_ptrs_low, shape)?;
+    let high_ptrs = screen_pointers(bus, layout.loader.tile_ram_ptrs_high, shape)?;
     for (screen, (lo_base, hi_base)) in low_ptrs.iter().zip(high_ptrs.iter()).enumerate() {
         for row in 0..rows {
             for col in 0..cols {
@@ -364,12 +392,19 @@ fn cell_position(vertical: bool, screen: usize, row: usize, col: usize) -> (usiz
 /// The per-screen 24-bit RAM pointers for `layer` in level `mode`. Modes
 /// without tile RAM (boss rooms: the game's table holds `$0000`) yield no
 /// pointers, so their grids come out blank.
-fn screen_pointers(rom: &Rom, table: SnesAddr, shape: GridShape) -> Result<Vec<u32>, LoadError> {
+///
+/// Reads go through the bus because Lunar Magic 3.x's mode table points at
+/// per-screen tables its level init builds in WRAM (`$0BF6`).
+fn screen_pointers(
+    bus: &SnesBus<'_>,
+    table: SnesAddr,
+    shape: GridShape,
+) -> Result<Vec<u32>, LoadError> {
     let bank = table.bank();
-    let layer_table = rom.read_u16_le(offset(table, shape.layer.index().saturating_mul(2))?)?;
+    let layer_table = bus.peek_u16(offset(table, shape.layer.index().saturating_mul(2))?.get());
     let mode_entry =
         offset(SnesAddr::from_parts(bank, layer_table), u32::from(shape.mode).saturating_mul(2))?;
-    let screen_table_offset = rom.read_u16_le(mode_entry)?;
+    let screen_table_offset = bus.peek_u16(mode_entry.get());
     if screen_table_offset == 0 {
         return Ok(Vec::new());
     }
@@ -377,7 +412,7 @@ fn screen_pointers(rom: &Rom, table: SnesAddr, shape: GridShape) -> Result<Vec<u
     (0..shape.screens)
         .map(|s| {
             let entry = offset(screen_table, u32::try_from(s).unwrap_or(0).saturating_mul(3))?;
-            Ok(rom.read_u24_le(entry)?)
+            Ok(bus.peek_u24(entry.get()))
         })
         .collect()
 }

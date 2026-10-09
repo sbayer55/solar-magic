@@ -4,10 +4,17 @@ What Lunar Magic (LM) adds to a ROM, and where Solar Magic reads it.
 Addresses live in `smw_data::layout::LM_25X` (`crates/smw-data/src/layout/lunar_magic.rs`).
 
 **Verified 2026-10-06** by byte inspection and disassembly of two LM-saved
-ROMs: Quickie World 1.12 (LM 2.52) and Quickie World 2 (LM 2.53). Every
-address below is identical in both. Other LM versions are untested;
-`RomLayout::detect` only accepts a ROM whose routines carry the fingerprints
-listed at the end, and reports the first missing one otherwise.
+ROMs: Quickie World 1.12 (LM 2.52) and Quickie World 2 (LM 2.53), and
+**2026-10-08** against an LM 3.71 save of the vanilla ROM. Every table
+address below is identical in all three. `RomLayout::detect` checks each
+hijack site independently (the table at the end) and records the result in
+`LunarMagicTables::features`, so any version loads with the features it
+has; only the layer 2 hook and its call site are required.
+
+| Version | Detected | Notes |
+|---|---|---|
+| 2.52, 2.53 | all features except `EXT_OBJECTS_3X` | flags format `V25x` |
+| 3.71 | all features | flags format `V3x`; see "Lunar Magic 3.71" below |
 
 ## Container
 
@@ -78,10 +85,15 @@ Kinds seen: `00` (code), `01`, `02`, `03`, `10`, `11`; revisions `01` and
 `02`. `smw_data::layout::scan_markers` finds them, `solar info` counts them
 and `solar diff-rom --markers` lists them. Their exact meaning is not decoded.
 
-## Lunar Magic 3.71 (first observations, 2026-10-08)
+## Lunar Magic 3.71 (2026-10-08)
 
 From `solar diff-rom vanilla a-unchanged.sfc` (an LM 3.71 save with level
-105 untouched) and byte probes; not yet supported by `RomLayout::detect`:
+105 untouched) and byte probes. Detected and read since 2026-10-08: every
+level re-serializes byte-exact, the flags of all 512 untouched levels match
+their pointer shape (`lm3_flags_match_pointer_shape`), and levels 105, 1,
+C5, E8 and 1F4 render pixel-identical to the vanilla ROM
+(`lm3_unchanged_save_renders_like_vanilla`). Level data additions (extended
+objects 01/03, the new per-level tables) are still raw.
 
 - Five of the six 2.5x fingerprints match. The layer 2 flags hook body at
   `$0E:F510` differs: `38 E9 7F D0 08 8F 0B C0 7F …` (`SEC; SBC #$7F`)
@@ -96,6 +108,22 @@ From `solar diff-rom vanilla a-unchanged.sfc` (an LM 3.71 save with level
   `20` per level, `$06:FC00` `00`, `$06:FE00` `1A`. `$05:FF00–FFFF` (the
   upper half of the fourth vanilla secondary-exit table, unused by vanilla)
   is written, as are unused secondary exits above `0xCE` (zeroed).
+- The 276 unused levels whose layer 2 pointer was `$FF:D900` in vanilla
+  (the shared Yoshi's Island background) now point at `$0C:DE54`; the 210
+  other background pointers only had their bank byte rewritten. Layer 1 and
+  sprite pointers changed only for the re-saved level 105.
+- **The loader's per-screen tile-RAM pointer tables moved to WRAM.** The
+  per-mode tables at `$00:BDA8`/`$00:BDE8`/`$00:BE28` point horizontal modes
+  0–2 at `$0BF6` (layer 1 low bytes, 32 screens; layer 2 continues at
+  `$0C26`) and `$0C56` (high bytes) instead of the ROM tables at `$00:BAD8`
+  and `$00:BC40`; vertical modes still use the ROM tables. The hijacked
+  level init (`JSL` at `$00:9708` into bank `$10`) fills them and sets the
+  level height word `$13D7` (`0x1B0`) from the header — this is the "custom
+  level sizes" feature. Verified 2026-10-08 by running the game's init under
+  `solar trace --stop`: for a vanilla-height level the WRAM tables are byte
+  copies of the ROM tables, so `smw_render` seeds them from the ROM
+  (`V3X_SCREEN_TABLE_SEEDS`) before running the loader; the loader's tile RAM
+  then matches vanilla byte for byte. Custom heights need the real init.
 - Extended objects 01 and 03 have code at `$0D:E1D0` / `$0D:E1E0`; objects
   0x24–0x26 are null routines in 3.71.
 - The unchanged level 105 is re-saved: layer 1 at `$10:8008`, sprites at
@@ -109,15 +137,26 @@ Expanded overworld, layer 3 editing, custom overworld sprites (`$0E:F55D`),
 SA-1 and ExLoROM mappings, `.mwl` export, LM 3.x table moves and its
 optional LC_LZ3 compression.
 
-## Fingerprints
+## Hijacks (fingerprints)
 
-Bytes `RomLayout::detect` requires (all `FF` in vanilla):
+The sites `smw_data::layout::scan_hijacks` checks (`HIJACKS` in
+`layout/lunar_magic.rs`), each mapped to an `LmFeatures` flag. All are `FF`
+or vanilla code in an unmodified ROM. Verified 2026-10-08 on 2.52, 2.53 and
+3.71.
 
-| Address | Bytes | What |
-|---|---|---|
-| `$06:F540` | `C9 00 04 90 74` | FG Map16 getter prologue |
-| `$0E:FD00` | `08 C2 30 A2 00 00 A0 B0 01 AF 0B C0 7F` | BG page set getter prologue |
-| `$0E:F510` | `C9 FF D0 09 1A 8F 0B C0 7F` | layer 2 flags hook |
-| `$05:8039` | `A5 6A 5C 10 F5 0E` | loader jump to that hook |
-| `$05:8DA4` | `22 00 FD 0E EA` | BG page set call |
-| `$0D:A4C7` | `50 F1 0D` | dispatch entry of direct Map16 object 0x27 |
+| Feature | Address | Bytes | What |
+|---|---|---|---|
+| `LAYER2_HOOK` (required) | `$0E:F510` | 2.5x `C9 FF D0 09 1A 8F 0B C0 7F`; 3.x `38 E9 7F D0 08 8F 0B C0 7F` | layer 2 flags hook; the variant fixes the flags format |
+| `LAYER2_HOOK_CALL` (required) | `$05:8039` | `A5 6A 5C 10 F5 0E` | loader jump to that hook |
+| `SPRITE_BANKS` | `$05:D8F5` | `22 00 F3 0E` | sprite bank table call (`$0E:F300`) |
+| `FG_MAP16_GETTER` | `$06:F540` | `C9 00 04 90 74` | FG Map16 getter prologue |
+| `BG_PAGE_SETS` | `$0E:FD00` | `08 C2 30 A2 00 00 A0 B0 01 AF 0B C0 7F` | BG page set getter prologue |
+| `BG_PAGE_SET_CALL` | `$05:8DA4` | `22 00 FD 0E EA` | BG page set call |
+| `DIRECT_MAP16` | `$0D:A4C7` | `50 F1 0D` | dispatch entry of direct Map16 object 0x27 |
+| `EXT_OBJECT_02` | `$0D:A115` | `B0 E1 0D` | 5-byte screen exit dispatch |
+| `EXT_OBJECTS_3X` | `$0D:A112`, `$0D:A118` | `D0 E1 0D`, `E0 E1 0D` | 3.x extended objects 01 and 03 (2.5x: vanilla / `00 00 00`) |
+| `ACTS_LIKE_GETTER` | `$06:F600` | `EA EA 98 5C 45 F5 00` | Map16 acts-like getter |
+
+Consumers gate on the flags: `FgPageResolver` needs `FG_MAP16_GETTER`,
+`load_bg_set` needs `BG_PAGE_SETS`, `RomLayout::sprite_banks` is set only
+with `SPRITE_BANKS`.
