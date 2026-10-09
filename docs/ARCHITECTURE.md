@@ -86,10 +86,21 @@ the level's undo stack and are written on Save.
 byte read before it was written, and hardware register touched. `solar trace
 <rom> level:<n>` runs the level loader that way and `solar trace <rom>
 <bank:offset> [--ram addr=val]` `JSL`s into any routine, printing the touched
-ranges coalesced. This is how table locations are found before they are
-verified and recorded in `docs/formats/`: for example `solar trace rom
+ranges coalesced and labelled by the table they start in (`--unknown-only`
+hides the labelled ones). This is how table locations are found before they
+are verified and recorded in `docs/formats/`: for example `solar trace rom
 04:DC57` shows the overworld layer 1 tilemap being copied from
 `$0C:F7DF..$0C:FFDE` to `$7E:C800`.
+
+`RomLayout::known_ranges` is the catalogue behind those labels: every table
+the layout names, plus the ones reached through a pointer (tileset Map16
+blocks, Lunar Magic's relocated tables). `solar diff-rom a b` compares two
+images with it: changed byte ranges labelled `layer1_ptrs[0x105]`-style,
+RATS tags added, removed or resized, and (`--markers`) Lunar Magic's `"LM"`
+markers (`smw_data::layout::scan_markers`). The Lunar Magic
+reverse-engineering loop is: save a before/after ROM pair in Lunar Magic,
+`diff-rom` them, `trace` the affected level, record the table in
+`docs/formats/lunar-magic-ext.md` with the date, add a fingerprint and a test.
 
 ## Rendering pipeline
 

@@ -11,6 +11,7 @@
 
 mod addr;
 pub mod copier_header;
+pub mod diff;
 mod error;
 mod header;
 mod mapper;
