@@ -9,10 +9,11 @@ use crate::table::OPCODES;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[non_exhaustive]
 pub enum StopReason {
-    /// `STP` executed.
+    /// `STP` executed; only a reset restarts the processor.
     #[error("STP executed")]
     Stp,
-    /// `WAI` executed (no interrupts are modelled, so this is terminal).
+    /// `WAI` executed and no interrupt has arrived (reported by
+    /// [`Cpu::run_until`], which has no interrupt source).
     #[error("WAI executed")]
     Wai,
     /// `BRK` executed and the caller asked to treat it as fatal.
@@ -38,6 +39,17 @@ pub enum CpuError {
     /// Internal: an addressing mode with no data operand was resolved as one.
     #[error("internal: mode has no operand")]
     NotAnOperand,
+}
+
+/// What one call to [`Cpu::step`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum Exec {
+    /// An instruction executed.
+    Ran,
+    /// The processor is waiting for an interrupt after `WAI`; nothing ran
+    /// and no cycles were spent.
+    Waiting,
 }
 
 /// A 65c816 processor state.
@@ -67,6 +79,10 @@ pub struct Cpu {
     pub steps: u64,
     /// Whether `BRK`/`COP` stop execution instead of taking the vector.
     pub brk_is_fatal: bool,
+    /// Set by `WAI`; cleared when [`Cpu::nmi`] or [`Cpu::irq`] arrives.
+    pub waiting: bool,
+    /// Set by `STP`; only [`Cpu::reset`] clears it.
+    pub stopped: bool,
 }
 
 impl Default for Cpu {
@@ -92,6 +108,8 @@ impl Cpu {
             e: false,
             steps: 0,
             brk_is_fatal: false,
+            waiting: false,
+            stopped: false,
         }
     }
 
@@ -117,12 +135,22 @@ impl Cpu {
     ///
     /// # Errors
     ///
-    /// [`CpuError::Stopped`] on `STP`/`WAI` (or fatal `BRK`).
-    pub fn step(&mut self, bus: &mut dyn Bus) -> Result<(), CpuError> {
+    /// [`CpuError::Stopped`] on `STP` (or fatal `BRK`), including every call
+    /// after the processor has stopped.
+    pub fn step(&mut self, bus: &mut dyn Bus) -> Result<Exec, CpuError> {
+        if self.stopped {
+            return Err(StopReason::Stp.into());
+        }
+        if self.waiting {
+            return Ok(Exec::Waiting);
+        }
+        // In emulation mode the stack pointer's high byte is wired to 1.
+        self.fix_emulation_stack();
         let opcode = self.fetch8(bus);
         let entry = OPCODES.get(usize::from(opcode)).copied().unwrap_or(OPCODES[0xEA]);
         self.steps = self.steps.saturating_add(1);
-        (entry.0)(self, bus, entry.1)
+        (entry.0)(self, bus, entry.1)?;
+        Ok(Exec::Ran)
     }
 
     /// Runs until the program counter reaches `stop_pc24` (checked before
@@ -130,7 +158,9 @@ impl Cpu {
     ///
     /// # Errors
     ///
-    /// [`CpuError::Budget`] if the budget runs out; stop errors from [`Cpu::step`].
+    /// [`CpuError::Budget`] if the budget runs out; stop errors from
+    /// [`Cpu::step`]; [`StopReason::Wai`] if the code waits for an interrupt,
+    /// since this loop has none to deliver.
     pub fn run_until(
         &mut self,
         bus: &mut dyn Bus,
@@ -141,7 +171,9 @@ impl Cpu {
             if self.pc24() == stop_pc24 {
                 return Ok(());
             }
-            self.step(bus)?;
+            if self.step(bus)? == Exec::Waiting {
+                return Err(StopReason::Wai.into());
+            }
         }
         Err(CpuError::Budget)
     }

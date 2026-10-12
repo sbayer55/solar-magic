@@ -4,7 +4,8 @@ use std::path::Path;
 use std::{fs, io};
 
 use crate::{
-    InternalHeader, LoRom, MapKind, Mapper, MapperKind, RomError, SnesAddr, copier_header,
+    ExLoRom, InternalHeader, LoRom, MapKind, Mapper, MapperKind, RomError, Sa1Rom, SnesAddr,
+    copier_header,
 };
 
 /// File offset of the internal header for LoROM images.
@@ -12,6 +13,8 @@ const LOROM_HEADER_PC: usize = 0x7FC0;
 
 /// File offset of the internal header for HiROM images.
 const HIROM_HEADER_PC: usize = 0xFFC0;
+/// Where bank `$00`'s header lands in an ExLoROM image (the second 4 MiB).
+const EXLOROM_HEADER_PC: usize = 0x40_7FC0;
 
 /// Lowest [`InternalHeader::plausibility`] score accepted as a real header.
 ///
@@ -65,7 +68,7 @@ impl Rom {
     ///
     /// - [`RomError::TooSmall`] if fewer than 32 KiB remain.
     /// - [`RomError::NoHeader`] if no plausible header is found.
-    /// - [`RomError::UnsupportedMapping`] for HiROM, ExHiROM, SA-1 and ExLoROM
+    /// - [`RomError::UnsupportedMapping`] for HiROM and ExHiROM
     ///   (not implemented yet).
     pub fn from_bytes(mut data: Vec<u8>) -> Result<Self, RomError> {
         let copier_header = copier_header::detect(data.len())
@@ -335,28 +338,39 @@ struct Detected {
     mapper: MapperKind,
 }
 
-/// Reads the headers at both candidate locations and picks the most plausible.
+/// Reads the headers at the candidate locations and picks the most plausible.
+///
+/// An image above 4 MiB whose bank-`$00` header (at `0x40_7FC0` under
+/// ExLoROM) declares ExLoROM is taken at its word; otherwise the LoROM and
+/// HiROM locations compete on plausibility.
 fn detect_mapping(data: &[u8]) -> Result<Detected, RomError> {
     let header_at = |pc: usize| {
         data.get(pc..pc.checked_add(InternalHeader::LEN)?).and_then(InternalHeader::parse)
     };
-    let lo = header_at(LOROM_HEADER_PC);
-    let hi = header_at(HIROM_HEADER_PC);
     let score = |h: &Option<InternalHeader>| h.as_ref().map_or(0, InternalHeader::plausibility);
-    let (header, header_pc) =
-        if score(&lo) >= score(&hi) { (lo, LOROM_HEADER_PC) } else { (hi, HIROM_HEADER_PC) };
+    let exlo = header_at(EXLOROM_HEADER_PC)
+        .filter(|h| h.map_kind() == MapKind::ExLoRom && h.plausibility() >= MIN_PLAUSIBILITY);
+    let (header, header_pc) = exlo.map_or_else(
+        || {
+            let lo = header_at(LOROM_HEADER_PC);
+            let hi = header_at(HIROM_HEADER_PC);
+            if score(&lo) >= score(&hi) { (lo, LOROM_HEADER_PC) } else { (hi, HIROM_HEADER_PC) }
+        },
+        |h| (Some(h), EXLOROM_HEADER_PC),
+    );
     let header = header.ok_or(RomError::NoHeader)?;
     if header.plausibility() < MIN_PLAUSIBILITY {
         return Err(RomError::NoHeader);
     }
-    match header.map_kind() {
-        MapKind::LoRom => Ok(Detected { header, header_pc, mapper: MapperKind::LoRom(LoRom) }),
-        MapKind::HiRom => Err(RomError::UnsupportedMapping("HiROM")),
-        MapKind::ExHiRom => Err(RomError::UnsupportedMapping("ExHiROM")),
-        MapKind::ExLoRom => Err(RomError::UnsupportedMapping("ExLoROM")),
-        MapKind::Sa1 => Err(RomError::UnsupportedMapping("SA-1")),
-        MapKind::Unknown(_) => Err(RomError::NoHeader),
-    }
+    let mapper = match header.map_kind() {
+        MapKind::LoRom => MapperKind::LoRom(LoRom),
+        MapKind::ExLoRom => MapperKind::ExLoRom(ExLoRom),
+        MapKind::Sa1 => MapperKind::Sa1(Sa1Rom),
+        MapKind::HiRom => return Err(RomError::UnsupportedMapping("HiROM")),
+        MapKind::ExHiRom => return Err(RomError::UnsupportedMapping("ExHiROM")),
+        MapKind::Unknown(_) => return Err(RomError::NoHeader),
+    };
+    Ok(Detected { header, header_pc, mapper })
 }
 
 #[cfg(test)]
@@ -388,6 +402,44 @@ mod tests {
         assert!(!rom.had_copier_header());
         assert_eq!(rom.header().title, "SUPER MARIOWORLD");
         assert_eq!(rom.mapper().name(), "LoROM");
+    }
+
+    /// Rewrites the map-mode byte of a synthetic image's header at `header_pc`.
+    fn with_map_mode(mut data: Vec<u8>, header_pc: usize, mode: u8) -> Vec<u8> {
+        let end = header_pc.wrapping_add(0x20);
+        data[header_pc..end].copy_from_slice(&crate::test_fixtures::SMW_HEADER);
+        data[header_pc.wrapping_add(0x15)] = mode;
+        data[header_pc.wrapping_add(0x17)] = 0x06;
+        data
+    }
+
+    #[test]
+    fn detects_sa1_from_map_mode() {
+        let rom =
+            Rom::from_bytes(with_map_mode(synthetic_rom(false), 0x7FC0, 0x23)).expect("valid");
+        assert_eq!(rom.mapper().name(), "SA-1");
+        assert_eq!(rom.read_u8(SnesAddr::lit(0x00_8010)).expect("mapped"), 0x10);
+        assert_eq!(rom.read_u8(SnesAddr::lit(0xC0_0010)).expect("mapped"), 0x10);
+    }
+
+    #[test]
+    fn detects_exlorom_from_the_upper_header() {
+        // 4 MiB + 64 KiB: the second half starts with a header declaring $32.
+        let mut data = vec![0xFFu8; 0x41_0000];
+        data[..0x1_0000].copy_from_slice(&synthetic_rom(false));
+        let data = with_map_mode(data, 0x40_7FC0, 0x32);
+        let rom = Rom::from_bytes(data).expect("valid");
+        assert_eq!(rom.mapper().name(), "ExLoROM");
+        assert_eq!(rom.header().map_mode, 0x32);
+        // Bank $80 reads the first half, bank $00 the second.
+        assert_eq!(rom.read_u8(SnesAddr::lit(0x80_8010)).expect("mapped"), 0x10);
+        assert_eq!(rom.read_u8(SnesAddr::lit(0x00_FFD5)).expect("mapped"), 0x32);
+    }
+
+    #[test]
+    fn hirom_is_still_refused() {
+        let err = Rom::from_bytes(with_map_mode(synthetic_rom(false), 0x7FC0, 0x21)).unwrap_err();
+        assert!(matches!(err, RomError::UnsupportedMapping("HiROM")));
     }
 
     #[test]

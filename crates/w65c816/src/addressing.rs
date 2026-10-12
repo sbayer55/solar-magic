@@ -1,4 +1,5 @@
-//! Addressing modes and operand resolution.
+//! Addressing modes and operand resolution, including the internal cycles
+//! each mode spends (reported through [`Bus::idle`]).
 
 use crate::bits::{join, lo, lo16, w, w32};
 use crate::bus::Bus;
@@ -57,6 +58,18 @@ pub(crate) enum Mode {
     BlockMove,
 }
 
+/// What the instruction does with a memory operand. Indexed modes spend an
+/// extra internal cycle for writes and read-modify-writes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Access {
+    /// The operand is only read.
+    Read,
+    /// The operand is only written.
+    Write,
+    /// The operand is read, modified and written back.
+    Rmw,
+}
+
 /// How a 16-bit access past the operand address wraps.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Wrap {
@@ -87,54 +100,37 @@ impl Cpu {
         bus: &mut dyn Bus,
         mode: Mode,
         eight: bool,
+        access: Access,
     ) -> Result<Loc, CpuError> {
         Ok(match mode {
-            Mode::Implied | Mode::Rel8 | Mode::Rel16 | Mode::BlockMove => {
-                return Err(CpuError::NotAnOperand);
-            }
+            Mode::Implied
+            | Mode::Rel8
+            | Mode::Rel16
+            | Mode::BlockMove
+            | Mode::AbsInd
+            | Mode::AbsIndX
+            | Mode::AbsIndLong => return Err(CpuError::NotAnOperand),
             Mode::Acc => Loc::Acc,
             Mode::Imm => Loc::Imm(if eight { w(self.fetch8(bus)) } else { self.fetch16(bus) }),
-            Mode::Dp => self.dp_loc(bus, 0),
-            Mode::DpX => {
-                let x = self.x;
-                self.dp_loc(bus, x)
-            }
-            Mode::DpY => {
-                let y = self.y;
-                self.dp_loc(bus, y)
-            }
-            Mode::DpInd => {
-                let ptr = self.dp_pointer16(bus, 0)?;
-                Loc::Mem(join(self.db, ptr), Wrap::Linear)
-            }
-            Mode::DpIndX => {
-                let x = self.x;
-                let ptr = self.dp_pointer16(bus, x)?;
-                Loc::Mem(join(self.db, ptr), Wrap::Linear)
-            }
-            Mode::DpIndY => {
-                let ptr = self.dp_pointer16(bus, 0)?;
-                Loc::Mem(crate::addr24(join(self.db, ptr).wrapping_add(w32(self.y))), Wrap::Linear)
-            }
-            Mode::DpIndLong => {
-                let ptr = self.dp_pointer24(bus)?;
-                Loc::Mem(ptr, Wrap::Linear)
-            }
-            Mode::DpIndLongY => {
-                let ptr = self.dp_pointer24(bus)?;
-                Loc::Mem(crate::addr24(ptr.wrapping_add(w32(self.y))), Wrap::Linear)
-            }
+            Mode::Dp
+            | Mode::DpX
+            | Mode::DpY
+            | Mode::DpInd
+            | Mode::DpIndX
+            | Mode::DpIndY
+            | Mode::DpIndLong
+            | Mode::DpIndLongY => self.resolve_dp(bus, mode, access)?,
             Mode::Abs => {
                 let off = self.fetch16(bus);
                 Loc::Mem(join(self.db, off), Wrap::Linear)
             }
             Mode::AbsX => {
-                let off = self.fetch16(bus);
-                Loc::Mem(crate::addr24(join(self.db, off).wrapping_add(w32(self.x))), Wrap::Linear)
+                let x = self.x;
+                self.indexed(bus, x, access)
             }
             Mode::AbsY => {
-                let off = self.fetch16(bus);
-                Loc::Mem(crate::addr24(join(self.db, off).wrapping_add(w32(self.y))), Wrap::Linear)
+                let y = self.y;
+                self.indexed(bus, y, access)
             }
             Mode::AbsLong => Loc::Mem(self.fetch24(bus), Wrap::Linear),
             Mode::AbsLongX => {
@@ -143,21 +139,88 @@ impl Cpu {
             }
             Mode::StackRel => {
                 let off = self.fetch8(bus);
+                bus.idle();
                 Loc::Mem(w32(self.s.wrapping_add(w(off))), Wrap::Bank0)
             }
             Mode::StackRelIndY => {
                 let off = self.fetch8(bus);
+                bus.idle();
                 let ptr = Self::read16_wrapped(bus, w32(self.s.wrapping_add(w(off))), Wrap::Bank0);
+                bus.idle();
                 Loc::Mem(crate::addr24(join(self.db, ptr).wrapping_add(w32(self.y))), Wrap::Linear)
             }
-            Mode::AbsInd | Mode::AbsIndX | Mode::AbsIndLong => return Err(CpuError::NotAnOperand),
         })
     }
 
+    /// The direct-page family.
+    #[allow(clippy::wildcard_enum_match_arm, reason = "every other mode is dispatched by resolve")]
+    fn resolve_dp(
+        &mut self,
+        bus: &mut dyn Bus,
+        mode: Mode,
+        access: Access,
+    ) -> Result<Loc, CpuError> {
+        Ok(match mode {
+            Mode::Dp => self.dp_loc(bus, 0),
+            Mode::DpX => {
+                let x = self.x;
+                let loc = self.dp_loc(bus, x);
+                bus.idle();
+                loc
+            }
+            Mode::DpY => {
+                let y = self.y;
+                let loc = self.dp_loc(bus, y);
+                bus.idle();
+                loc
+            }
+            Mode::DpInd => {
+                let ptr = self.dp_pointer16(bus, 0, false)?;
+                Loc::Mem(join(self.db, ptr), Wrap::Linear)
+            }
+            Mode::DpIndX => {
+                let x = self.x;
+                let ptr = self.dp_pointer16(bus, x, true)?;
+                Loc::Mem(join(self.db, ptr), Wrap::Linear)
+            }
+            Mode::DpIndY => {
+                let ptr = self.dp_pointer16(bus, 0, false)?;
+                self.idle_index(bus, ptr, ptr.wrapping_add(self.y), access);
+                Loc::Mem(crate::addr24(join(self.db, ptr).wrapping_add(w32(self.y))), Wrap::Linear)
+            }
+            Mode::DpIndLong => Loc::Mem(self.dp_pointer24(bus)?, Wrap::Linear),
+            Mode::DpIndLongY => {
+                let ptr = self.dp_pointer24(bus)?;
+                Loc::Mem(crate::addr24(ptr.wrapping_add(w32(self.y))), Wrap::Linear)
+            }
+            _ => return Err(CpuError::NotAnOperand),
+        })
+    }
+
+    /// `abs,X` / `abs,Y`.
+    fn indexed(&mut self, bus: &mut dyn Bus, index: u16, access: Access) -> Loc {
+        let off = self.fetch16(bus);
+        self.idle_index(bus, off, off.wrapping_add(index), access);
+        Loc::Mem(crate::addr24(join(self.db, off).wrapping_add(w32(index))), Wrap::Linear)
+    }
+
+    /// The extra cycle indexed modes spend: always for writes and
+    /// read-modify-writes, otherwise only with 16-bit indexes or when the
+    /// index carries into the high byte of the address.
+    fn idle_index(&self, bus: &mut dyn Bus, base: u16, effective: u16, access: Access) {
+        if access != Access::Read || !self.x8() || (base ^ effective) & 0xFF00 != 0 {
+            bus.idle();
+        }
+    }
+
     /// Direct page address `D + op8 + index`, with the emulation-mode page
-    /// wrap when the direct page register's low byte is zero.
+    /// wrap when the direct page register's low byte is zero. A nonzero low
+    /// byte costs one internal cycle.
     fn dp_loc(&mut self, bus: &mut dyn Bus, index: u16) -> Loc {
         let off = self.fetch8(bus);
+        if lo(self.d) != 0 {
+            bus.idle();
+        }
         if self.e && lo(self.d) == 0 {
             let addr = (self.d & 0xFF00) | w(off.wrapping_add(lo(index)));
             Loc::Mem(w32(addr), Wrap::Page)
@@ -166,9 +229,19 @@ impl Cpu {
         }
     }
 
-    /// Reads the 16-bit pointer stored at a direct page location.
-    fn dp_pointer16(&mut self, bus: &mut dyn Bus, index: u16) -> Result<u16, CpuError> {
-        match self.dp_loc(bus, index) {
+    /// Reads the 16-bit pointer stored at a direct page location; `indexed`
+    /// adds the internal cycle `(dp,X)` spends before the pointer read.
+    fn dp_pointer16(
+        &mut self,
+        bus: &mut dyn Bus,
+        index: u16,
+        indexed: bool,
+    ) -> Result<u16, CpuError> {
+        let loc = self.dp_loc(bus, index);
+        if indexed {
+            bus.idle();
+        }
+        match loc {
             Loc::Mem(addr, wrap) => Ok(Self::read16_wrapped(bus, addr, wrap)),
             Loc::Imm(_) | Loc::Acc => Err(CpuError::NotAnOperand),
         }
@@ -204,7 +277,7 @@ impl Cpu {
         u16::from_le_bytes([lo, hi])
     }
 
-    /// Writes a 16-bit value honouring the wrap rule.
+    /// Writes a 16-bit value honouring the wrap rule, low byte first.
     pub(crate) fn write16_wrapped(bus: &mut dyn Bus, addr: u32, wrap: Wrap, value: u16) {
         let [lo, hi] = value.to_le_bytes();
         bus.write(addr, lo);
@@ -244,6 +317,19 @@ impl Cpu {
                     Self::write16_wrapped(bus, addr, wrap, value);
                 }
             }
+        }
+    }
+
+    /// Writes a read-modify-write result. 16-bit memory results are stored
+    /// high byte first, the reverse of a plain store, as the hardware does.
+    pub(crate) fn write_loc_rmw(&mut self, bus: &mut dyn Bus, loc: Loc, eight: bool, value: u16) {
+        match loc {
+            Loc::Mem(addr, wrap) if !eight => {
+                let [lo, hi] = value.to_le_bytes();
+                bus.write(Self::next_addr(addr, wrap), hi);
+                bus.write(addr, lo);
+            }
+            Loc::Imm(_) | Loc::Acc | Loc::Mem(..) => self.write_loc(bus, loc, eight, value),
         }
     }
 }

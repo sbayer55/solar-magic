@@ -1,8 +1,10 @@
 //! Runs the `SingleStepTests` 65816 suite when `W65C816_TESTS_DIR` points at a
 //! directory of its `*.json` files (<https://github.com/SingleStepTests/65816>).
 //!
-//! Native-mode files must pass completely; emulation-mode files are reported
-//! but allowed to fail, since Solar Magic only runs native-mode code.
+//! Every case checks the architectural state *and* the exact bus-cycle
+//! sequence (reads, writes and internal cycles, with addresses and values).
+//! Both native- and emulation-mode files must pass completely, apart from
+//! the documented disagreements in [`KNOWN_DISAGREEMENTS`].
 
 use std::collections::HashMap;
 use std::fs;
@@ -11,11 +13,15 @@ use std::path::Path;
 use serde::Deserialize;
 use w65c816::{Bus, Cpu, Flags};
 
+/// `[address, value, "dpvremxl"]` per cycle; `null` where the bus held nothing.
+type Cycle = (Option<u32>, Option<u8>, String);
+
 #[derive(Deserialize)]
 struct Case {
     name: String,
     initial: State,
     r#final: State,
+    cycles: Vec<Cycle>,
 }
 
 #[derive(Deserialize)]
@@ -33,23 +39,48 @@ struct State {
     ram: Vec<(u32, u8)>,
 }
 
-/// Memory as a map so each case is cheap to set up.
-#[derive(Default)]
-struct SparseBus {
-    mem: HashMap<u32, u8>,
+/// Cases where the suite and the documented hardware disagree; the core
+/// follows the hardware (and bsnes).
+///
+/// * `e1 e 8669`: `(dp,X)` in emulation mode with `DL = 0` and `dp + X = $FF`.
+///   The 65816 fetches the pointer's high byte from `D + $00` (the 6502 page
+///   wrap); the suite reads it from `D + $100`. No other case in the suite
+///   exercises this.
+const KNOWN_DISAGREEMENTS: [&str; 1] = ["e1 e 8669"];
+
+/// One bus cycle as the core reports it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Event {
+    Read(u32, u8),
+    Write(u32, u8),
+    Idle,
 }
 
-impl Bus for SparseBus {
+/// Memory as a map so each case is cheap to set up, plus the cycle log.
+#[derive(Default)]
+struct RecordingBus {
+    mem: HashMap<u32, u8>,
+    log: Vec<Event>,
+}
+
+impl Bus for RecordingBus {
     fn read(&mut self, addr: u32) -> u8 {
-        self.mem.get(&(addr & 0xFF_FFFF)).copied().unwrap_or(0)
+        let v = self.mem.get(&(addr & 0xFF_FFFF)).copied().unwrap_or(0);
+        self.log.push(Event::Read(addr & 0xFF_FFFF, v));
+        v
     }
 
     fn write(&mut self, addr: u32, value: u8) {
         self.mem.insert(addr & 0xFF_FFFF, value);
+        self.log.push(Event::Write(addr & 0xFF_FFFF, value));
+    }
+
+    fn idle(&mut self) {
+        self.log.push(Event::Idle);
     }
 }
 
-fn load(state: &State) -> (Cpu, SparseBus) {
+fn load(state: &State) -> (Cpu, RecordingBus) {
     let mut cpu = Cpu::new();
     cpu.pc = state.pc;
     cpu.s = state.s;
@@ -61,14 +92,55 @@ fn load(state: &State) -> (Cpu, SparseBus) {
     cpu.d = state.d;
     cpu.pb = state.pbr;
     cpu.e = state.e != 0;
-    let mut bus = SparseBus::default();
+    let mut bus = RecordingBus::default();
     for &(addr, value) in &state.ram {
-        bus.write(addr, value);
+        bus.mem.insert(addr, value);
     }
     (cpu, bus)
 }
 
-fn mismatches(cpu: &Cpu, bus: &mut SparseBus, want: &State) -> Vec<String> {
+/// Translates the suite's cycle records into expected events. Cycles with
+/// none of VDA/VPA/VPB are internal; an all-`-` record is the halted bus
+/// after `WAI`/`STP` and is skipped. A `null` value matches anything.
+fn expected_events(cycles: &[Cycle]) -> Vec<(Event, bool)> {
+    cycles
+        .iter()
+        .filter(|(_, _, flags)| flags.chars().any(|c| c != '-'))
+        .map(|&(addr, value, ref flags)| {
+            let valid = flags.chars().take(3).any(|c| matches!(c, 'd' | 'p' | 'v'));
+            if !valid {
+                return (Event::Idle, true);
+            }
+            let addr = addr.unwrap_or(0);
+            let known = value.is_some();
+            let v = value.unwrap_or(0);
+            let write = flags.chars().nth(3) == Some('w');
+            (if write { Event::Write(addr, v) } else { Event::Read(addr, v) }, known)
+        })
+        .collect()
+}
+
+const fn same_event(got: Event, (want, value_known): (Event, bool)) -> bool {
+    match (got, want) {
+        (Event::Idle, Event::Idle) => true,
+        (Event::Read(a, v), Event::Read(b, w)) | (Event::Write(a, v), Event::Write(b, w)) => {
+            a == b && (!value_known || v == w)
+        }
+        _ => false,
+    }
+}
+
+fn cycle_mismatch(log: &[Event], case: &Case) -> Option<String> {
+    let want = expected_events(&case.cycles);
+    if log.len() == want.len() && log.iter().zip(&want).all(|(&g, &w)| same_event(g, w)) {
+        return None;
+    }
+    let want_only: Vec<Event> = want.iter().map(|w| w.0).collect();
+    Some(format!("cycles: got {log:X?} want {want_only:X?}"))
+}
+
+fn mismatches(cpu: &Cpu, bus: &RecordingBus, case: &Case) -> Vec<String> {
+    let want = &case.r#final;
     let mut out = Vec::new();
     let mut check = |name: &str, got: u32, exp: u32| {
         if got != exp {
@@ -86,11 +158,12 @@ fn mismatches(cpu: &Cpu, bus: &mut SparseBus, want: &State) -> Vec<String> {
     check("pbr", u32::from(cpu.pb), u32::from(want.pbr));
     check("e", u32::from(cpu.e), u32::from(want.e));
     for &(addr, value) in &want.ram {
-        let got = bus.read(addr);
+        let got = bus.mem.get(&addr).copied().unwrap_or(0);
         if got != value {
             out.push(format!("ram[{addr:#08X}]: got {got:#04X} want {value:#04X}"));
         }
     }
+    out.extend(cycle_mismatch(&bus.log, case));
     out
 }
 
@@ -101,11 +174,11 @@ fn run_file(path: &Path) -> (usize, usize, Vec<String>) {
     let cases: Vec<Case> = serde_json::from_str(&text).expect("valid JSON");
     let mut failures = 0;
     let mut samples = Vec::new();
-    for case in &cases {
+    for case in cases.iter().filter(|c| !KNOWN_DISAGREEMENTS.contains(&c.name.as_str())) {
         let (mut cpu, mut bus) = load(&case.initial);
-        // STP/WAI report a stop; the architectural state is still comparable.
+        // STP reports a stop; the architectural state is still comparable.
         let _ = cpu.step(&mut bus);
-        let bad = mismatches(&cpu, &mut bus, &case.r#final);
+        let bad = mismatches(&cpu, &bus, case);
         if !bad.is_empty() {
             failures += 1;
             if samples.len() < 3 {
@@ -160,5 +233,5 @@ fn single_step_suite() {
         "files: {}, native failures: {native_failures}, emulation failures: {emu_failures}",
         files.len()
     );
-    assert_eq!(native_failures, 0, "native-mode single-step tests failed");
+    assert_eq!((native_failures, emu_failures), (0, 0), "single-step tests failed");
 }

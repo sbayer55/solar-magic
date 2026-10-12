@@ -3,7 +3,7 @@
 //! This crate answers three questions about a ROM image:
 //!
 //! 1. How do 24-bit SNES bus addresses map to byte offsets in the file
-//!    ([`Mapper`], [`LoRom`])? See `docs/formats/rom-mapping.md`.
+//!    ([`Mapper`]: [`LoRom`], [`ExLoRom`], [`Sa1Rom`])? See `docs/formats/rom-mapping.md`.
 //! 2. What does the internal header say ([`InternalHeader`])?
 //! 3. Which regions are claimed by RATS tags ([`rats`])? See `docs/formats/rats.md`.
 //!
@@ -22,5 +22,5 @@ pub mod test_fixtures;
 pub use addr::SnesAddr;
 pub use error::RomError;
 pub use header::{InternalHeader, MapKind};
-pub use mapper::{LoRom, Mapper, MapperKind};
+pub use mapper::{ExLoRom, LoRom, Mapper, MapperKind, Sa1Rom};
 pub use rom::Rom;

@@ -2,7 +2,8 @@
 
 Solar Magic is a Rust reimplementation of Lunar Magic, the Super Mario World
 level editor. This document is the map; the format details live in
-[`formats/`](formats/).
+[`formats/`](formats/) and the emulator's hardware notes in
+[`emulation/`](emulation/).
 
 ## Crate graph
 
@@ -32,11 +33,11 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 
 | Crate | Status | Responsibility |
 |---|---|---|
-| `snes-rom` | done | `Rom` (read, write, expand, checksum, save), `SnesAddr`, `Mapper`/`MapperKind`, `InternalHeader`, `rats::{scan, alloc}`, `copier_header` add/strip. No game knowledge. |
+| `snes-rom` | done | `Rom` (read, write, expand, checksum, save), `SnesAddr`, `Mapper`/`MapperKind` (LoROM, ExLoROM, SA-1 power-on map), `InternalHeader`, `rats::{scan, alloc}`, `copier_header` add/strip. No game knowledge. |
 | `ips` | done | IPS patch parse/serialize/apply/create with RLE and the Lunar IPS truncation extension; 16 MiB limit; avoids the `0x454F46` EOF-offset trap. No game knowledge. See `formats/ips.md`. |
 | `smw-data` | viewer, LM 2.5x reading, editing | `RomLayout` (vanilla tables plus Lunar Magic 2.5x's `LunarMagicTables`, known free space), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers with bit-field tables, objects including Lunar Magic's, layer 2 including 16-bit tilemaps with an RLE codec, sprites, secondary exits; byte-exact re-serialization; editing API; vanilla-safe `save_level`). |
 | `lc-lz2` | done | LC_LZ2 decompress and compress. |
-| `w65c816` | done | Minimal CPU interpreter with a `Bus` trait. No timing, no PPU. Passes the SingleStepTests 65816 native-mode suite (run with `W65C816_TESTS_DIR`). |
+| `w65c816` | done | CPU interpreter with a `Bus` trait. Cycle-exact through `Bus::idle` (a no-op for untimed buses), hardware `nmi`/`irq`/`reset`, `WAI`/`STP` states. Passes all 512 SingleStepTests 65816 files, native and emulation mode, including the exact bus-cycle sequence (`W65C816_TESTS_DIR`). See `docs/emulation/cpu.md`. |
 | `smw-render` | viewer, LM 2.5x, ownership | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
 | `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`. Also the test oracle. |
 | `solar-magic` | editor | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette. Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |

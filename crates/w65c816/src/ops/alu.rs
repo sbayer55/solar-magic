@@ -1,6 +1,6 @@
 //! Arithmetic, logic, compare, shift, and read-modify-write instructions.
 
-use crate::addressing::{Loc, Mode};
+use crate::addressing::{Access, Loc, Mode};
 use crate::bits::{lo16, mask, w32};
 use crate::bus::Bus;
 use crate::cpu::{Cpu, CpuError};
@@ -13,7 +13,7 @@ const fn limits(eight: bool) -> (u32, u16) {
 }
 
 fn operand(cpu: &mut Cpu, bus: &mut dyn Bus, mode: Mode, eight: bool) -> Result<u16, CpuError> {
-    let loc = cpu.resolve(bus, mode, eight)?;
+    let loc = cpu.resolve(bus, mode, eight, Access::Read)?;
     Ok(cpu.read_loc(bus, loc, eight))
 }
 
@@ -155,7 +155,7 @@ pub(crate) fn eor(cpu: &mut Cpu, bus: &mut dyn Bus, mode: Mode) -> R {
 
 pub(crate) fn bit(cpu: &mut Cpu, bus: &mut dyn Bus, mode: Mode) -> R {
     let eight = cpu.m8();
-    let loc = cpu.resolve(bus, mode, eight)?;
+    let loc = cpu.resolve(bus, mode, eight, Access::Read)?;
     let v = cpu.read_loc(bus, loc, eight);
     cpu.p.z = mask(cpu.a, eight) & v == 0;
     if !matches!(loc, Loc::Imm(_)) {
@@ -166,13 +166,15 @@ pub(crate) fn bit(cpu: &mut Cpu, bus: &mut dyn Bus, mode: Mode) -> R {
     Ok(())
 }
 
-/// Read-modify-write helper for memory or accumulator operands.
+/// Read-modify-write helper for memory or accumulator operands: one internal
+/// cycle between the read and the (high-byte-first) write.
 fn rmw(cpu: &mut Cpu, bus: &mut dyn Bus, mode: Mode, f: fn(&mut Cpu, u16, bool) -> u16) -> R {
     let eight = cpu.m8();
-    let loc = cpu.resolve(bus, mode, eight)?;
+    let loc = cpu.resolve(bus, mode, eight, Access::Rmw)?;
     let v = cpu.read_loc(bus, loc, eight);
+    bus.idle();
     let result = f(cpu, v, eight);
-    cpu.write_loc(bus, loc, eight, result);
+    cpu.write_loc_rmw(bus, loc, eight, result);
     Ok(())
 }
 

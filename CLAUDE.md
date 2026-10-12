@@ -1,7 +1,8 @@
 # Solar Magic
 
 Rust reimplementation of Lunar Magic (Super Mario World level editor).
-Read `docs/ARCHITECTURE.md` first; format details are in `docs/formats/`.
+Read `docs/ARCHITECTURE.md` first; format details are in `docs/formats/`,
+emulator hardware notes in `docs/emulation/`.
 
 ## Commands
 
@@ -26,7 +27,7 @@ cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> [--layers on
 cargo solar ips-apply <patch.ips> <target> <out> [--header keep|add|strip] [--log]
 cargo solar ips-create <original> <modified> <out.ips> [--log]
 cargo solar ips-info <patch.ips> [--limit N]
-W65C816_TESTS_DIR=<dir of SingleStepTests 65816 v1 json> cargo test -p w65c816 --release --test single_step
+W65C816_TESTS_DIR=~/code/SingleStepTests/65816/v1 cargo test -p w65c816 --release --test single_step   # cycle-exact, both modes
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # GUI editor
 ```
 
