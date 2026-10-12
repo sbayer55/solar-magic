@@ -76,5 +76,7 @@ positions, status bar and sprites.
 ## Open
 
 Yoshi state, Luigi's separate save fields, the "scripted overworld"
-fallback for ROMs whose entry routine differs, `Entrance::Position` at
-pixel precision.
+fallback for ROMs whose entry routine differs. "Play from here" (right-click
+in the level view) picks the entrance table entries nearest to the tile
+(`smw_play::entrance_for_tile`), so it is accurate to the tables' grid, not
+to the pixel.

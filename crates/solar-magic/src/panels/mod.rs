@@ -80,6 +80,8 @@ pub(crate) enum Action {
     ApplyGrouped(EditCommand, u64),
     /// Switch to another level (after a dirty check).
     SelectLevel(LevelId),
+    /// Start playing the level at the entrance nearest to a tile.
+    PlayFrom(smw_data::level::TilePos),
 }
 
 /// Mutable context handed to the dock while drawing.

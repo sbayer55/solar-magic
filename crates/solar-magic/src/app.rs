@@ -148,10 +148,15 @@ impl App {
 
     /// Starts (or restarts) the current level in the emulator and shows the panel.
     fn play_level(&mut self, ctx: &egui::Context) {
+        self.play_level_at(ctx, smw_play::Entrance::Main);
+    }
+
+    /// Starts the current level at `entrance` and shows the panel.
+    fn play_level_at(&mut self, ctx: &egui::Context, entrance: smw_play::Entrance) {
         let Some(doc) = self.doc.as_mut() else {
             return;
         };
-        doc.start_play(ctx);
+        doc.start_play(ctx, entrance);
         if self.dock.find_tab(&Tab::Play).is_none() {
             self.dock.push_to_focused_leaf(Tab::Play);
         }
@@ -669,15 +674,26 @@ impl eframe::App for App {
         DockArea::new(&mut self.dock).show_inside(ui, &mut viewer);
         let actions = viewer.actions;
         let mut select = None;
+        let mut play_from = None;
         for action in actions {
             match action {
                 Action::Apply(command) => doc.apply(command, None),
                 Action::ApplyGrouped(command, group) => doc.apply(command, Some(group)),
                 Action::SelectLevel(level) => select = Some(level),
+                Action::PlayFrom(tile) => play_from = Some(tile),
             }
         }
         if let Some(level) = select {
             self.request(Pending::SelectLevel(level));
+        }
+        if let Some(tile) = play_from {
+            let entrance = self.doc.as_ref().and_then(|d| {
+                let vertical = d.session.as_ref().is_some_and(|s| s.level.vertical);
+                smw_play::entrance_for_tile(&d.rom, &d.layout, vertical, (tile.x, tile.y)).ok()
+            });
+            if let Some(entrance) = entrance {
+                self.play_level_at(&ctx, entrance);
+            }
         }
     }
 }

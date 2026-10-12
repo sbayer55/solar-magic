@@ -9,7 +9,7 @@ mod overlays;
 mod state;
 
 pub use launcher::{LaunchError, Launcher, Phase};
-pub use state::{Entrance, LaunchRequest, MarioState, Player, Powerup};
+pub use state::{Entrance, LaunchRequest, MarioState, Player, Powerup, entrance_for_tile};
 
 use smw_data::RomLayout;
 use snes_core::Console;

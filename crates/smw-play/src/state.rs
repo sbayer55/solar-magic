@@ -101,3 +101,45 @@ pub struct LaunchRequest {
     /// Player state.
     pub mario: MarioState,
 }
+
+/// The entrance that puts the player nearest to level tile (`x`, `y`).
+///
+/// The screen comes from the tile; the X/Y indices are the entries of the
+/// entrance position tables (`EntranceTables`, `docs/formats/level-header.md`)
+/// whose pixel values are closest.
+///
+/// # Errors
+///
+/// ROM read failures.
+pub fn entrance_for_tile(
+    rom: &snes_rom::Rom,
+    layout: &smw_data::RomLayout,
+    vertical: bool,
+    tile: (u16, u16),
+) -> Result<Entrance, snes_rom::RomError> {
+    let (x, y) = tile;
+    let px = u32::from(x).wrapping_mul(16);
+    let py = u32::from(y).wrapping_mul(16);
+    let (screen, within_x, within_y) = if vertical {
+        (y / 16, px, py.checked_rem(256).unwrap_or(0))
+    } else {
+        (x / 16, px.checked_rem(256).unwrap_or(0), py)
+    };
+    let tables = &layout.entrance;
+    let nearest = |low: snes_rom::SnesAddr, high: snes_rom::SnesAddr, count: u32, target: u32| {
+        let mut best = (0u8, u32::MAX);
+        for i in 0..count {
+            let lo = rom.read_u8(low.checked_add(i).ok_or(snes_rom::RomError::Unmapped(low))?)?;
+            let hi = rom.read_u8(high.checked_add(i).ok_or(snes_rom::RomError::Unmapped(high))?)?;
+            let value = u32::from(u16::from_le_bytes([lo, hi]));
+            let distance = value.abs_diff(target);
+            if distance < best.1 {
+                best = (u8::try_from(i).unwrap_or(0), distance);
+            }
+        }
+        Ok::<u8, snes_rom::RomError>(best.0)
+    };
+    let x_index = nearest(tables.x_low, tables.x_high, 8, within_x)?;
+    let y_index = nearest(tables.y_low, tables.y_high, 16, within_y)?;
+    Ok(Entrance::Position { screen: u8::try_from(screen).unwrap_or(0) & 0x1F, x_index, y_index })
+}

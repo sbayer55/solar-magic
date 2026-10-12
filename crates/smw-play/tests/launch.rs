@@ -116,3 +116,18 @@ fn launched_level_plays_music() {
     let mean = energy / u64::try_from(audio.len().max(1)).unwrap_or(1);
     assert!(mean > 100, "mean absolute sample {mean}");
 }
+
+/// Play-from-here: the entrance nearest to a tile on screen 3 lands the
+/// player on screen 3.
+#[test]
+#[allow(clippy::expect_used, reason = "test harness")]
+fn entrance_for_tile_lands_on_that_screen() {
+    let Some((rom, layout)) = rom_from("SMW_ROM") else { return };
+    let entrance =
+        smw_play::entrance_for_tile(&rom, &layout, false, (3 * 16 + 4, 20)).expect("tables");
+    assert!(matches!(entrance, Entrance::Position { screen: 3, .. }), "{entrance:?}");
+    let console = launch(&rom, &layout, 0x105, MarioState { entrance, ..MarioState::default() });
+    let (x, y) = player_position(&console, &layout);
+    assert_eq!(x >> 8, 3);
+    assert!((256..432).contains(&y), "y {y}");
+}
