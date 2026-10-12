@@ -4,7 +4,7 @@
 
 use spc700::ApuBus;
 
-use crate::dsp::DspRegs;
+use crate::dsp::Dsp;
 use crate::ipl::{Ipl, IplPhase};
 use crate::timer::Timer;
 
@@ -19,7 +19,7 @@ pub struct Smp {
     /// `$F2 DSPADDR`.
     pub dsp_addr: u8,
     /// The DSP.
-    pub dsp: DspRegs,
+    pub dsp: Dsp,
     /// `$F4-$F7` as the SPC700 reads them (written by the S-CPU).
     pub inbox: [u8; 4],
     /// `$2140-$2143` as the S-CPU reads them (written by the SPC700).
@@ -45,7 +45,7 @@ impl Smp {
             test: 0x0A,
             rom_enabled: true,
             dsp_addr: 0,
-            dsp: DspRegs::new(),
+            dsp: Dsp::new(),
             inbox: [0; 4],
             outbox: [0; 4],
             aux: [0xFF; 2],
@@ -107,6 +107,10 @@ impl Smp {
     /// One SPC cycle: advances the timers' prescalers.
     pub(crate) fn tick(&mut self) {
         self.cycles = self.cycles.wrapping_add(1);
+        if self.cycles.trailing_zeros() >= 5 {
+            // 32 kHz: one DSP sample every 32 cycles.
+            self.dsp.run_sample(&mut self.ram);
+        }
         if self.cycles.trailing_zeros() >= 4 {
             // 64 kHz: every 16 cycles.
             if let Some(t2) = self.timers.get_mut(2) {

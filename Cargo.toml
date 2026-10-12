@@ -33,6 +33,9 @@ smw-play = { path = "crates/smw-play" }
 anyhow = "1.0"
 bitflags = "2.13"
 clap = { version = "4.6", features = ["derive"] }
+cpal = "0.18"
+hound = "3.5"
+rtrb = "0.4"
 image = { version = "0.25", default-features = false, features = ["png"] }
 insta = "1.49"
 thiserror = "2.0"

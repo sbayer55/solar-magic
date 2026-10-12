@@ -278,6 +278,9 @@ enum Command {
         /// Write the final picture as a PNG.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Write the sound since the level started as a 32 kHz WAV.
+        #[arg(long)]
+        audio: Option<PathBuf>,
     },
 }
 
@@ -298,9 +301,11 @@ fn main() -> ExitCode {
         Command::EmuBoot { rom, frames, trace, out } => {
             emu_boot::run(&rom, frames, trace, out.as_deref())
         }
-        Command::Play { rom, level, frames, midway, exit, powerup, out } => {
-            play::run(&rom, out.as_deref(), play::Options { level, frames, midway, exit, powerup })
-        }
+        Command::Play { rom, level, frames, midway, exit, powerup, out, audio } => play::run(
+            &rom,
+            play::Outputs { image: out.as_deref(), audio: audio.as_deref() },
+            play::Options { level, frames, midway, exit, powerup },
+        ),
         Command::Info { rom } => info::run(&rom),
         Command::DumpGfx { rom, out_dir, id, scale, row, exgfx } => {
             dump_gfx::run(&rom, &out_dir, dump_gfx::Options { id, scale, row, exgfx })

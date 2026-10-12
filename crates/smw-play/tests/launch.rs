@@ -97,3 +97,22 @@ fn lunar_magic_rom_launches() {
     let console = launch(&rom, &layout, 0x105, MarioState::default());
     assert_eq!(game_mode(&console, &layout), 0x14);
 }
+
+/// The level's music plays: a second of sound after the launch is far from
+/// silent.
+#[test]
+fn launched_level_plays_music() {
+    let Some((rom, layout)) = rom_from("SMW_ROM") else { return };
+    let mut console = launch(&rom, &layout, 0x105, MarioState::default());
+    let mut discard = Vec::new();
+    console.take_audio(&mut discard);
+    let mut audio = Vec::new();
+    for _ in 0..60 {
+        console.run_frame(Input::default());
+        console.take_audio(&mut audio);
+    }
+    assert!(audio.len() > 60_000, "{} samples", audio.len());
+    let energy: u64 = audio.iter().map(|&s| u64::from(s.unsigned_abs())).sum();
+    let mean = energy / u64::try_from(audio.len().max(1)).unwrap_or(1);
+    assert!(mean > 100, "mean absolute sample {mean}");
+}

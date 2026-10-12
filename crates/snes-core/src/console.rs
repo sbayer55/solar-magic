@@ -86,6 +86,12 @@ impl Console {
         self.bus.ppu.frame()
     }
 
+    /// Moves the sound output produced so far (interleaved stereo, 32 kHz)
+    /// into `out`.
+    pub fn take_audio(&mut self, out: &mut Vec<i16>) {
+        self.bus.apu.take_audio(out);
+    }
+
     /// Sets both controllers.
     pub const fn set_input(&mut self, input: Input) {
         self.bus.regs.joypads.input = input;

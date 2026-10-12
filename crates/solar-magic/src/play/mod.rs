@@ -1,6 +1,7 @@
 //! Playing the edited level: the emulator runs on its own thread, paced to
 //! the console's frame rate, and hands finished pictures to the UI.
 
+mod audio;
 mod input;
 
 use std::sync::Arc;
@@ -173,6 +174,16 @@ impl Pacer {
         Self { next: now, window_start: now, window_frames: 0, fps: 0.0 }
     }
 
+    /// Paces on the audio queue: sleeps while the device has more than the
+    /// target depth queued, so the emulator runs exactly as fast as sound
+    /// is consumed.
+    fn wait_for_audio(&mut self, out: &audio::AudioOut) {
+        while out.queued_frames() > audio::TARGET_FRAMES {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        self.count_frame(Instant::now());
+    }
+
     /// Sleeps until the next frame is due; resynchronises when far behind.
     fn wait(&mut self) {
         let now = Instant::now();
@@ -182,6 +193,10 @@ impl Pacer {
             self.next = now;
         }
         self.next = self.next.checked_add(Duration::from_nanos(FRAME_NANOS)).unwrap_or(now);
+        self.count_frame(now);
+    }
+
+    fn count_frame(&mut self, now: Instant) {
         self.window_frames = self.window_frames.saturating_add(1);
         let elapsed = now.saturating_duration_since(self.window_start);
         if elapsed >= Duration::from_secs(1) {
@@ -201,6 +216,8 @@ impl Worker {
         frames: &SyncSender<FrameEvent>,
     ) {
         let mut console = Console::new(&self.rom, Region::Ntsc);
+        let mut audio = audio::AudioOut::open();
+        let mut samples = Vec::new();
         let mut launcher = Launcher::start(&mut console, &self.rom, &self.layout, request);
         let mut input = Input::default();
         let mut running = true;
@@ -237,7 +254,15 @@ impl Worker {
             } else {
                 launcher.step(&mut console, &self.layout);
             }
-            pacer.wait();
+            console.take_audio(&mut samples);
+            match audio.as_mut() {
+                Some(out) => {
+                    out.push(&samples);
+                    pacer.wait_for_audio(out);
+                }
+                None => pacer.wait(),
+            }
+            samples.clear();
             let frame = console.frame();
             let event = FrameEvent {
                 rgba: Arc::from(frame.to_rgba()),

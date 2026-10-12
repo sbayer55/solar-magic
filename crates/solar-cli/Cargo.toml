@@ -13,6 +13,7 @@ name = "solar"
 path = "src/main.rs"
 
 [dependencies]
+hound.workspace = true
 snes-core.workspace = true
 smw-play.workspace = true
 anyhow.workspace = true

@@ -24,8 +24,17 @@ pub(crate) struct Options {
     pub(crate) powerup: u8,
 }
 
-/// Launches the level and optionally writes the picture.
-pub(crate) fn run(rom_path: &Path, out: Option<&Path>, options: Options) -> anyhow::Result<()> {
+/// Output files.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Outputs<'a> {
+    /// PNG of the last frame.
+    pub(crate) image: Option<&'a Path>,
+    /// WAV (32 kHz stereo) of the sound since the level started.
+    pub(crate) audio: Option<&'a Path>,
+}
+
+/// Launches the level and optionally writes the picture and the sound.
+pub(crate) fn run(rom_path: &Path, outputs: Outputs<'_>, options: Options) -> anyhow::Result<()> {
     let rom = Rom::load(rom_path).with_context(|| format!("loading {}", rom_path.display()))?;
     let layout = RomLayout::detect(&rom)?;
     let id = LevelId::new(options.level)
@@ -47,8 +56,12 @@ pub(crate) fn run(rom_path: &Path, out: Option<&Path>, options: Options) -> anyh
     let mut launcher = Launcher::start(&mut console, &rom, &layout, LaunchRequest { level, mario });
     launcher.run_to_play(&mut console, &layout).context("launching the level")?;
     let launched_at = console.bus().clock.frame;
+    let mut discard = Vec::new();
+    console.take_audio(&mut discard);
+    let mut audio = Vec::new();
     for _ in 0..options.frames {
         console.run_frame(Input::default());
+        console.take_audio(&mut audio);
     }
     let (x, y) = smw_play::player_position(&console, &layout);
     println!(
@@ -56,8 +69,30 @@ pub(crate) fn run(rom_path: &Path, out: Option<&Path>, options: Options) -> anyh
         console.bus().clock.frame,
         smw_play::game_mode(&console, &layout)
     );
-    if let Some(path) = out {
+    if let Some(path) = outputs.image {
         crate::emu_boot::write_frame(&console, path)?;
     }
+    if let Some(path) = outputs.audio {
+        write_wav(path, &audio)?;
+    }
+    Ok(())
+}
+
+/// Writes interleaved 32 kHz stereo samples as a 16-bit WAV file.
+fn write_wav(path: &Path, samples: &[i16]) -> anyhow::Result<()> {
+    let spec = hound::WavSpec {
+        channels: 2,
+        sample_rate: 32_000,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec)
+        .with_context(|| format!("creating {}", path.display()))?;
+    for &s in samples {
+        writer.write_sample(s)?;
+    }
+    writer.finalize()?;
+    let peak = samples.iter().map(|s| i32::from(*s).abs()).max().unwrap_or(0);
+    println!("wrote {} ({} frames, peak {peak})", path.display(), samples.len() / 2);
     Ok(())
 }

@@ -62,7 +62,37 @@ Reads of `$FFC0-$FFFF` return `$FF` under the model. `Ipl::Rom(bytes)`
 executes a user-supplied dump normally. Super Mario World's driver upload
 completes and the game reaches its title screen (`SMW_ROM`-gated test).
 
-## S-DSP
+## S-DSP (`snes-apu::Dsp`)
 
-Register storage only (`DspRegs`, `FLG` powers on as `$E0`). Voices, BRR,
-envelopes, echo and output are milestone E6.
+Runs once every 32 SPC cycles (32 kHz), after the fullsnes DSP chapters and
+the `snes_spc`/ares model (`dsp/{mod,voice,echo,tables}.rs`):
+
+- **Voices:** `DIR`/`SRCN` → BRR start/loop; two BRR bytes decode per
+  sample into a 12-sample ring (shift with the `≥13` rule, filters 0-3 with
+  the exact fixed-point formulas, 16-bit clamp, stored ×2); the pitch
+  counter (bits 12-13 sample, 4-11 Gaussian index, `+pitch` per sample
+  clamped to `$7FFF`, pitch modulation from the previous voice's output);
+  four-point Gaussian interpolation with the 512-entry table transcribed
+  from fullsnes and the hardware's partial overflow handling; noise LFSR
+  shared by all voices at the `FLG` rate.
+- **Envelope:** ADSR (attack `N×2+1`, decay `N×2+16`, sustain `N`) or GAIN
+  (direct, linear/exponential decrease, linear/bent increase), stepped when
+  the shared 30720-sample counter fires for the rate (ares' rate/offset
+  tables), decay→sustain at the sustain level, release −8 per sample.
+- **Keys:** `KON`/`KOFF` polled every other sample; key-on starts a
+  five-sample delay (envelope 0, no pitch) and clears the voice's `ENDX`;
+  a block with end-without-loop or `FLG` bit 7 forces release at level 0;
+  `ENDX` sets when a looping block ends; `ENVX`/`OUTX` are written every
+  sample; writing `ENDX` clears it.
+- **Echo:** ring buffer at `ESA` of `EDL×2 KiB` (length sampled on wrap),
+  8-tap FIR over the last eight reads (first seven summed wrapping, the
+  eighth clamped), feedback through `EFB`, writes gated by `FLG` bit 5.
+- **Mixer:** per-voice `VOL×out >> 7` with 16-bit clamps, master and echo
+  volumes, mute; output queued as interleaved `i16` for the host
+  (`Console::take_audio`).
+
+Verified 2026-10-12: `solar play 105 --audio out.wav` produces the level's
+music (continuous, bounded, with harmonic peaks); `SMW_ROM`-gated test
+`launched_level_plays_music`. The editor's Play panel streams it through
+`cpal` (resampled to the device rate) and paces emulation on the queue
+depth, so picture and sound stay in step.

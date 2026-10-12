@@ -1,6 +1,6 @@
 //! The SNES audio processing unit as seen from the S-CPU: an SPC700 core,
 //! 64 KiB of RAM, the `$F0-$FF` registers (timers, DSP port, CPU ports), the
-//! boot-ROM handshake, and (later) the S-DSP. `docs/emulation/apu.md`.
+//! boot-ROM handshake, and the S-DSP. `docs/emulation/apu.md`.
 //!
 //! The APU runs on its own 24.576 MHz crystal. [`Apu::run_to`] converts the
 //! S-CPU's master-clock position into SPC cycles exactly
@@ -13,7 +13,7 @@ mod timer;
 
 use spc700::Spc700;
 
-pub use dsp::DspRegs;
+pub use dsp::Dsp;
 pub use ipl::{Ipl, IplPhase};
 pub use smp::Smp;
 
@@ -94,5 +94,10 @@ impl Apu {
     #[must_use]
     pub const fn cycles(&self) -> u64 {
         self.smp.cycles
+    }
+
+    /// Moves the DSP's queued output (interleaved stereo, 32 kHz) into `out`.
+    pub fn take_audio(&mut self, out: &mut Vec<i16>) {
+        self.smp.dsp.take_audio(out);
     }
 }
