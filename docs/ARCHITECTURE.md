@@ -8,23 +8,24 @@ level editor. This document is the map; the format details live in
 ## Crate graph
 
 ```
-solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump/patch tools)
-        │         │                         │         │
-        │         └────────────┬────────────│─────────┘
-        │                      ▼            │
-        │                     ips           │       IPS patch parse/apply/create
-        └──────────────┬────────────────────┘
-                       ▼
-                  smw-render        Level → Map16 grid → RGBA raster
-                       │
+solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump/patch/emu tools)
+        │         │                         │         │        │
+        │         └────────────┬────────────│─────────┘        │
+        │                      ▼            │                  ▼
+        │                     ips           │              snes-core   the machine: clock, bus,
+        └──────────────┬────────────────────┘                  │       DMA, cart, Console
+                       ▼                              ┌────────┼────────┐
+                  smw-render        Level → grid      ▼        ▼        ▼
+                       │            → RGBA raster  snes-ppu  snes-apu  (snes-rom, w65c816)
                        ▼
                    smw-data         SMW formats: RomLayout, headers, objects,
                        │            sprites, Map16, GFX, palettes
         ┌──────────────┼──────────────┐
         ▼              ▼              ▼
     snes-rom        lc-lz2         w65c816
-  ROM container,  compression   65c816 interpreter that runs the
-  LoROM mapping,                game's own object routines
+  ROM container,  compression   cycle-exact 65c816 interpreter; runs the
+  LoROM/ExLoROM/                game's object routines untimed, and the
+  SA-1 mapping,                 whole game under snes-core
   header, RATS
 ```
 
@@ -38,8 +39,11 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 | `smw-data` | viewer, LM 2.5x reading, editing | `RomLayout` (vanilla tables plus Lunar Magic 2.5x's `LunarMagicTables`, known free space), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers with bit-field tables, objects including Lunar Magic's, layer 2 including 16-bit tilemaps with an RLE codec, sprites, secondary exits; byte-exact re-serialization; editing API; vanilla-safe `save_level`). |
 | `lc-lz2` | done | LC_LZ2 decompress and compress. |
 | `w65c816` | done | CPU interpreter with a `Bus` trait. Cycle-exact through `Bus::idle` (a no-op for untimed buses), hardware `nmi`/`irq`/`reset`, `WAI`/`STP` states. Passes all 512 SingleStepTests 65816 files, native and emulation mode, including the exact bus-cycle sequence (`W65C816_TESTS_DIR`). See `docs/emulation/cpu.md`. |
+| `snes-ppu` | registers + memories | `Ppu`: `$2100-$213F` decoded into `Regs`, `Vram`/`Oam`/`Cgram` with their port quirks, counter latches, open-bus bits. No renderer yet (`docs/emulation/ppu.md`, planned). |
+| `snes-apu` | stub | `Apu`: the four CPU ports; SPC700, timers, IPL handshake and S-DSP land in E2/E6. |
+| `snes-core` | boots SMW to the APU wait | `Clock` (master cycles, lines, dots, events), `SystemBus` (speeds, open bus, routing, lazy catch-up), `CpuRegs` (NMI/IRQ, ALU, joypads), `Dma` (GPDMA/HDMA), `Cartridge` (ROM, SRAM, `Coprocessor` hook), `Console` facade (run frames, breakpoints, peek/poke, overlays). `docs/emulation/{timing,memory-map}.md`. |
 | `smw-render` | viewer, LM 2.5x, ownership | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
-| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`. Also the test oracle. |
+| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`, `emu-boot`. Also the test oracle. |
 | `solar-magic` | editor | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette. Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
 
 ## The vanilla / Lunar Magic seam

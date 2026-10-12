@@ -13,6 +13,7 @@ name = "solar"
 path = "src/main.rs"
 
 [dependencies]
+snes-core.workspace = true
 anyhow.workspace = true
 clap.workspace = true
 image.workspace = true

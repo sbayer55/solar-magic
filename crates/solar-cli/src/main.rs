@@ -11,6 +11,7 @@ mod dump_gfx;
 mod dump_level;
 mod dump_map16;
 mod dump_owners;
+mod emu_boot;
 mod expand;
 mod free_space;
 mod gfx_check;
@@ -240,6 +241,17 @@ enum Command {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Boots a ROM in the in-house SNES emulator and reports the CPU state.
+    EmuBoot {
+        /// ROM file.
+        rom: PathBuf,
+        /// Frames to run.
+        #[arg(long, default_value_t = 60)]
+        frames: u32,
+        /// Instructions to sample afterwards for a hot-address histogram.
+        #[arg(long, default_value_t = 0)]
+        trace: usize,
+    },
 }
 
 /// Parses a hexadecimal byte with or without a `0x` prefix.
@@ -256,6 +268,7 @@ fn parse_hex_u16(s: &str) -> Result<u16, String> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Command::EmuBoot { rom, frames, trace } => emu_boot::run(&rom, frames, trace),
         Command::Info { rom } => info::run(&rom),
         Command::DumpGfx { rom, out_dir, id, scale, row, exgfx } => {
             dump_gfx::run(&rom, &out_dir, dump_gfx::Options { id, scale, row, exgfx })

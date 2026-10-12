@@ -3736,6 +3736,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "snes-apu"
+version = "0.1.0"
+
+[[package]]
+name = "snes-core"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.13.2",
+ "snes-apu",
+ "snes-ppu",
+ "snes-rom",
+ "thiserror 2.0.21",
+ "w65c816",
+]
+
+[[package]]
+name = "snes-ppu"
+version = "0.1.0"
+
+[[package]]
 name = "snes-rom"
 version = "0.1.0"
 dependencies = [
@@ -3755,6 +3775,7 @@ dependencies = [
  "serde_json",
  "smw-data",
  "smw-render",
+ "snes-core",
  "snes-rom",
 ]
 
