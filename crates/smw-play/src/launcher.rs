@@ -237,6 +237,11 @@ impl Launcher {
 
     fn wait_level(&mut self, console: &mut Console, layout: &RomLayout) {
         if game_mode(console, layout) == layout.launch.modes.level {
+            if let Some((x, y)) = self.request.pixel {
+                let ram = &layout.launch.ram;
+                console.poke_u16(WRAM | u32::from(ram.player_x), x);
+                console.poke_u16(WRAM | u32::from(ram.player_y), y);
+            }
             self.enter(Phase::Playing);
             return;
         }

@@ -148,15 +148,20 @@ impl App {
 
     /// Starts (or restarts) the current level in the emulator and shows the panel.
     fn play_level(&mut self, ctx: &egui::Context) {
-        self.play_level_at(ctx, smw_play::Entrance::Main);
+        self.play_level_at(ctx, smw_play::Entrance::Main, None);
     }
 
     /// Starts the current level at `entrance` and shows the panel.
-    fn play_level_at(&mut self, ctx: &egui::Context, entrance: smw_play::Entrance) {
+    fn play_level_at(
+        &mut self,
+        ctx: &egui::Context,
+        entrance: smw_play::Entrance,
+        pixel: Option<(u16, u16)>,
+    ) {
         let Some(doc) = self.doc.as_mut() else {
             return;
         };
-        doc.start_play(ctx, entrance);
+        doc.start_play(ctx, entrance, pixel);
         if self.dock.find_tab(&Tab::Play).is_none() {
             self.dock.push_to_focused_leaf(Tab::Play);
         }
@@ -692,7 +697,11 @@ impl eframe::App for App {
                 smw_play::entrance_for_tile(&d.rom, &d.layout, vertical, (tile.x, tile.y)).ok()
             });
             if let Some(entrance) = entrance {
-                self.play_level_at(&ctx, entrance);
+                // Small Mario's image fills the lower half of his 32-pixel
+                // box: start one tile up so he stands on the clicked tile.
+                let pixel =
+                    (tile.x.saturating_mul(16), tile.y.saturating_mul(16).saturating_sub(16));
+                self.play_level_at(&ctx, entrance, Some(pixel));
             }
         }
     }

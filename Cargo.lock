@@ -4070,6 +4070,7 @@ dependencies = [
  "smw-render",
  "snes-core",
  "snes-rom",
+ "w65c816",
 ]
 
 [[package]]

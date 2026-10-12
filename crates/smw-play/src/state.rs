@@ -100,6 +100,9 @@ pub struct LaunchRequest {
     pub level: Level,
     /// Player state.
     pub mario: MarioState,
+    /// Exact player position (level pixels) set once the level has loaded;
+    /// the entrance still chooses the screen and camera.
+    pub pixel: Option<(u16, u16)>,
 }
 
 /// The entrance that puts the player nearest to level tile (`x`, `y`).

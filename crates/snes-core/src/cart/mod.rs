@@ -30,6 +30,10 @@ pub trait Coprocessor: core::fmt::Debug + Send {
     fn battery(&self) -> Option<&[u8]>;
     /// Battery-backed memory, writable (loading a save).
     fn battery_mut(&mut self) -> Option<&mut [u8]>;
+    /// Whether the battery memory changed since `clear_battery_dirty`.
+    fn battery_dirty(&self) -> bool;
+    /// Marks the battery memory as saved.
+    fn clear_battery_dirty(&mut self);
     /// A deep copy, for save states.
     fn boxed_clone(&self) -> Box<dyn Coprocessor>;
 }
@@ -109,6 +113,39 @@ impl Cartridge {
         let bank = crate::bits::bank(addr);
         let offset = addr & 0xFFFF;
         offset < 0x8000 && matches!(bank, 0x70..=0x7D | 0xF0..=0xFF)
+    }
+
+    /// The battery-backed memory: the coprocessor's, else the SRAM.
+    #[must_use]
+    pub fn battery(&self) -> &[u8] {
+        self.copro.as_ref().and_then(|c| c.battery()).unwrap_or_else(|| self.sram.bytes())
+    }
+
+    /// Loads a save into the battery-backed memory (extra bytes dropped).
+    pub fn load_battery(&mut self, data: &[u8]) {
+        match self.copro.as_mut().and_then(|c| c.battery_mut()) {
+            Some(bytes) => {
+                for (slot, &b) in bytes.iter_mut().zip(data) {
+                    *slot = b;
+                }
+            }
+            None => self.sram.load(data),
+        }
+        self.clear_battery_dirty();
+    }
+
+    /// Whether the battery-backed memory changed since the last save.
+    #[must_use]
+    pub fn battery_dirty(&self) -> bool {
+        self.copro.as_ref().map_or_else(|| self.sram.is_dirty(), |c| c.battery_dirty())
+    }
+
+    /// Marks the battery-backed memory as saved.
+    pub fn clear_battery_dirty(&mut self) {
+        match self.copro.as_mut() {
+            Some(c) => c.clear_battery_dirty(),
+            None => self.sram.clear_dirty(),
+        }
     }
 
     /// Reads a cartridge address; `None` means open bus.

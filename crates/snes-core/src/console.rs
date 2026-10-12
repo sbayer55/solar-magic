@@ -173,6 +173,35 @@ impl Console {
         u16::from_le_bytes([self.peek(addr), self.peek(addr.wrapping_add(1) & 0xFF_FFFF)])
     }
 
+    /// The cartridge's battery-backed memory (`.srm` contents).
+    #[must_use]
+    pub fn battery(&self) -> &[u8] {
+        self.bus.cart.battery()
+    }
+
+    /// Loads a `.srm` into the battery-backed memory.
+    pub fn load_battery(&mut self, data: &[u8]) {
+        self.bus.cart.load_battery(data);
+    }
+
+    /// Whether the battery-backed memory changed since the last
+    /// `clear_battery_dirty`.
+    #[must_use]
+    pub fn battery_dirty(&self) -> bool {
+        self.bus.cart.battery_dirty()
+    }
+
+    /// Marks the battery-backed memory as saved.
+    pub fn clear_battery_dirty(&mut self) {
+        self.bus.cart.clear_battery_dirty();
+    }
+
+    /// The breakpoints (mirror-free 24-bit addresses).
+    #[must_use]
+    pub fn breakpoints(&self) -> &[Addr] {
+        &self.breakpoints
+    }
+
     /// Writes a WRAM byte (other addresses are ignored).
     pub fn poke(&mut self, addr: Addr, v: u8) {
         let bank = crate::bits::bank(addr);

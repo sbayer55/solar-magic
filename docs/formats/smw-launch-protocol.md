@@ -80,3 +80,13 @@ fallback for ROMs whose entry routine differs. "Play from here" (right-click
 in the level view) picks the entrance table entries nearest to the tile
 (`smw_play::entrance_for_tile`), so it is accurate to the tables' grid, not
 to the pixel.
+
+## Exact start position
+
+`LaunchRequest::pixel` places the player at an exact level-pixel position:
+once the game mode reaches `$14` (level running), the player X/Y words
+(`LaunchRam::player_x`/`player_y`, `$7E:0094`/`$7E:0096` in the table
+above) are overwritten. The entrance still selects the screen and the
+camera, so the position should lie on that screen. The editor's "Play from
+here" uses the tile's pixel X and one tile above its pixel Y, because
+small Mario's image fills the lower half of his 32-pixel box.

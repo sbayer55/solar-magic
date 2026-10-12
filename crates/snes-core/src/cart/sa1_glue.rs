@@ -41,6 +41,14 @@ impl Coprocessor for Sa1Copro {
         Some(self.0.chip.bwram_mut())
     }
 
+    fn battery_dirty(&self) -> bool {
+        self.0.chip.bwram_dirty()
+    }
+
+    fn clear_battery_dirty(&mut self) {
+        self.0.chip.clear_bwram_dirty();
+    }
+
     fn boxed_clone(&self) -> Box<dyn Coprocessor> {
         Box::new(self.clone())
     }

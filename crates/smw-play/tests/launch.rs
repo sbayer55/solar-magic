@@ -23,7 +23,8 @@ fn rom_from(var: &str) -> Option<(Rom, RomLayout)> {
 fn launch(rom: &Rom, layout: &RomLayout, id: u16, mario: MarioState) -> Console {
     let level = Level::load(rom, layout, LevelId::new(id).expect("valid id")).expect("level loads");
     let mut console = Console::new(rom, Region::Ntsc);
-    let mut launcher = Launcher::start(&mut console, rom, layout, LaunchRequest { level, mario });
+    let mut launcher =
+        Launcher::start(&mut console, rom, layout, LaunchRequest { level, mario, pixel: None });
     launcher.run_to_play(&mut console, layout).expect("level launches");
     console
 }

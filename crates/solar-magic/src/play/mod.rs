@@ -2,9 +2,12 @@
 //! the console's frame rate, and hands finished pictures to the UI.
 
 mod audio;
+mod debug;
 mod gamepad;
 mod input;
 
+use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, SyncSender, TrySendError, channel, sync_channel};
 use std::thread::JoinHandle;
@@ -12,14 +15,21 @@ use std::time::{Duration, Instant};
 
 use smw_data::RomLayout;
 use smw_play::{LaunchRequest, Launcher, Phase};
-use snes_core::{Console, Input, Region};
+use snes_core::{Console, Hit, Input, Region, RunReport};
 use snes_rom::Rom;
 
+pub(crate) use debug::{DebugConfig, DebugSnapshot, TraceRing, parse_address};
 pub(crate) use gamepad::Gamepads;
 pub(crate) use input::{KeyMap, read_input};
 
 /// Master cycles per NTSC frame (262 lines of 1364, minus the short line).
 const FRAME_NANOS: u64 = 16_639_267;
+/// Frames between rewind snapshots.
+const REWIND_INTERVAL: u64 = 15;
+/// Rewind snapshots kept (10 seconds).
+const REWIND_DEPTH: usize = 40;
+/// Frames between battery saves while the save RAM is dirty.
+const BATTERY_SAVE_FRAMES: u64 = 300;
 
 /// What the UI asks the emulator thread to do.
 #[derive(Debug)]
@@ -38,8 +48,26 @@ pub(crate) enum Command {
     SaveState,
     /// Return to the remembered state.
     LoadState,
+    /// Execute one instruction (while paused).
+    StepInstruction,
+    /// Stop when the program counter reaches this address.
+    AddBreakpoint(u32),
+    /// Forget a breakpoint.
+    RemoveBreakpoint(u32),
+    /// What the Debug panel wants captured.
+    SetDebug(DebugConfig),
+    /// Back to the previous rewind snapshot.
+    Rewind,
     /// Exit the thread.
     Quit,
+}
+
+/// Text fields of the Debug panel.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct DebugFields {
+    pub(crate) breakpoint: String,
+    pub(crate) watch: String,
+    pub(crate) memory: String,
 }
 
 /// A finished frame and where the machine is.
@@ -61,6 +89,8 @@ pub(crate) struct FrameEvent {
     pub(crate) player: (u16, u16),
     /// Emulated frames per wall-clock second over the last second.
     pub(crate) fps: f32,
+    /// Debugger view.
+    pub(crate) debug: DebugSnapshot,
 }
 
 /// The UI's handle on a running emulator.
@@ -82,6 +112,10 @@ pub(crate) struct PlaySession {
     pub(crate) keys: KeyMap,
     /// Gamepads (feature `gamepad`).
     pub(crate) gamepads: Option<Gamepads>,
+    /// What the Debug panel asks the thread to capture.
+    pub(crate) debug: DebugConfig,
+    /// The Debug panel's text fields.
+    pub(crate) debug_fields: DebugFields,
 }
 
 impl std::fmt::Debug for PlaySession {
@@ -97,10 +131,11 @@ impl PlaySession {
         rom: &Rom,
         layout: &RomLayout,
         request: LaunchRequest,
+        srm: Option<PathBuf>,
     ) -> Self {
         let (commands, command_rx) = channel();
         let (frame_tx, frames) = sync_channel(2);
-        let worker = Worker { rom: rom.clone(), layout: layout.clone(), ctx: ctx.clone() };
+        let worker = Worker { rom: rom.clone(), layout: layout.clone(), ctx: ctx.clone(), srm };
         let thread = std::thread::Builder::new()
             .name("snes".to_owned())
             .spawn(move || worker.run(request, &command_rx, &frame_tx))
@@ -116,7 +151,14 @@ impl PlaySession {
             input: Input::default(),
             keys: KeyMap::default(),
             gamepads: Gamepads::new(),
+            debug: DebugConfig::default(),
+            debug_fields: DebugFields::default(),
         }
+    }
+
+    /// Sends the Debug panel's current wishes to the thread.
+    pub(crate) fn send_debug_config(&self) {
+        self.send(Command::SetDebug(self.debug.clone()));
     }
 
     /// Sends a command (ignoring a dead thread).
@@ -169,6 +211,26 @@ struct Worker {
     rom: Rom,
     layout: RomLayout,
     ctx: egui::Context,
+    /// Battery save file next to the ROM.
+    srm: Option<PathBuf>,
+}
+
+/// Everything the thread mutates per frame.
+struct Machine {
+    console: Console,
+    launcher: Launcher,
+    input: Input,
+    running: bool,
+    steps_left: u32,
+    saved: Option<(Console, Launcher)>,
+    /// A snapshot every `REWIND_INTERVAL` frames, oldest first.
+    history: VecDeque<(Console, Launcher)>,
+    trace: TraceRing,
+    debug: DebugConfig,
+    /// Why the last run stopped.
+    stop: Option<Hit>,
+    /// Emit a frame although nothing ran (after a step or a rewind).
+    refresh: bool,
 }
 
 /// Frame-rate accounting.
@@ -227,77 +289,207 @@ impl Worker {
         frames: &SyncSender<FrameEvent>,
     ) {
         let mut console = Console::new(&self.rom, Region::Ntsc);
+        self.load_battery(&mut console);
+        let launcher = Launcher::start(&mut console, &self.rom, &self.layout, request);
+        let mut m = Machine {
+            console,
+            launcher,
+            input: Input::default(),
+            running: true,
+            steps_left: 0,
+            saved: None,
+            history: VecDeque::new(),
+            trace: TraceRing::default(),
+            debug: DebugConfig::default(),
+            stop: None,
+            refresh: false,
+        };
         let mut audio = audio::AudioOut::open();
         let mut samples = Vec::new();
-        let mut launcher = Launcher::start(&mut console, &self.rom, &self.layout, request);
-        let mut input = Input::default();
-        let mut running = true;
-        let mut steps_left = 0u32;
-        let mut saved: Option<(Console, Launcher)> = None;
         let mut pacer = Pacer::new();
         loop {
-            let command = if running || steps_left > 0 {
+            let active = m.running || m.steps_left > 0;
+            let command = if active {
                 commands.try_recv().ok()
             } else {
                 commands.recv_timeout(Duration::from_millis(50)).ok()
             };
-            match command {
-                Some(Command::Run) => running = true,
-                Some(Command::Pause) => running = false,
-                Some(Command::Step(n)) => {
-                    running = false;
-                    steps_left = n;
-                }
-                Some(Command::Relaunch(next)) => {
-                    launcher = Launcher::start(&mut console, &self.rom, &self.layout, *next);
-                    running = true;
-                }
-                Some(Command::Input(new_input)) => input = new_input,
-                Some(Command::SaveState) => saved = Some((console.clone(), launcher.clone())),
-                Some(Command::LoadState) => {
-                    if let Some((c, l)) = saved.as_ref() {
-                        console = c.clone();
-                        launcher = l.clone();
-                    }
-                }
-                Some(Command::Quit) => return,
-                None => {}
+            if let Some(command) = command
+                && !self.handle(&mut m, command)
+            {
+                return;
             }
-            if !running && steps_left == 0 {
+            let ran = m.running || m.steps_left > 0;
+            if ran {
+                m.advance(&self.layout);
+                m.console.take_audio(&mut samples);
+                match audio.as_mut() {
+                    Some(out) => {
+                        out.push(&samples);
+                        pacer.wait_for_audio(out);
+                    }
+                    None => pacer.wait(),
+                }
+                samples.clear();
+                if m.console.bus().clock.frame.is_multiple_of(BATTERY_SAVE_FRAMES) {
+                    self.save_battery(&mut m.console);
+                }
+            } else if !m.refresh {
                 continue;
             }
-            steps_left = steps_left.saturating_sub(1);
-            console.set_input(input);
-            if launcher.phase() == Phase::Playing {
-                console.run_frame(input);
-            } else {
-                launcher.step(&mut console, &self.layout);
-            }
-            console.take_audio(&mut samples);
-            match audio.as_mut() {
-                Some(out) => {
-                    out.push(&samples);
-                    pacer.wait_for_audio(out);
-                }
-                None => pacer.wait(),
-            }
-            samples.clear();
-            let frame = console.frame();
-            let event = FrameEvent {
-                rgba: Arc::from(frame.to_rgba()),
-                width: frame.width(),
-                height: frame.height(),
-                frame: console.bus().clock.frame,
-                phase: launcher.phase(),
-                game_mode: smw_play::game_mode(&console, &self.layout),
-                player: smw_play::player_position(&console, &self.layout),
-                fps: pacer.fps,
-            };
-            match frames.try_send(event) {
+            m.refresh = false;
+            match frames.try_send(m.event(&self.layout, pacer.fps)) {
                 Ok(()) | Err(TrySendError::Full(_)) => {}
                 Err(TrySendError::Disconnected(_)) => return,
             }
             self.ctx.request_repaint();
+        }
+    }
+
+    /// Applies a command; returns whether the thread keeps going.
+    fn handle(&self, m: &mut Machine, command: Command) -> bool {
+        match command {
+            Command::Run => {
+                m.running = true;
+                m.stop = None;
+            }
+            Command::Pause => m.running = false,
+            Command::Step(n) => {
+                m.running = false;
+                m.steps_left = n;
+                m.stop = None;
+            }
+            Command::Relaunch(next) => {
+                self.save_battery(&mut m.console);
+                m.launcher = Launcher::start(&mut m.console, &self.rom, &self.layout, *next);
+                m.history.clear();
+                m.running = true;
+                m.stop = None;
+            }
+            Command::Input(new_input) => m.input = new_input,
+            Command::SaveState => m.saved = Some((m.console.clone(), m.launcher.clone())),
+            Command::LoadState => {
+                if let Some((c, l)) = m.saved.as_ref() {
+                    m.console = c.clone();
+                    m.launcher = l.clone();
+                }
+                m.refresh = true;
+            }
+            Command::StepInstruction => m.step_instruction(),
+            Command::AddBreakpoint(addr) => {
+                m.console.add_breakpoint(addr);
+                m.refresh = true;
+            }
+            Command::RemoveBreakpoint(addr) => {
+                m.console.remove_breakpoint(addr);
+                m.refresh = true;
+            }
+            Command::SetDebug(cfg) => {
+                m.debug = cfg;
+                m.refresh = true;
+            }
+            Command::Rewind => m.rewind(),
+            Command::Quit => {
+                self.save_battery(&mut m.console);
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Loads `<rom>.srm` into the cartridge's battery RAM when it exists.
+    fn load_battery(&self, console: &mut Console) {
+        if let Some(path) = self.srm.as_ref()
+            && let Ok(bytes) = std::fs::read(path)
+        {
+            console.load_battery(&bytes);
+        }
+    }
+
+    /// Writes the battery RAM to `<rom>.srm` when it changed.
+    fn save_battery(&self, console: &mut Console) {
+        if let Some(path) = self.srm.as_ref()
+            && console.battery_dirty()
+            && !console.battery().is_empty()
+            && std::fs::write(path, console.battery()).is_ok()
+        {
+            console.clear_battery_dirty();
+        }
+    }
+}
+
+impl Machine {
+    /// Runs one frame (or one launch step), stopping on a breakpoint.
+    fn advance(&mut self, layout: &RomLayout) {
+        self.steps_left = self.steps_left.saturating_sub(1);
+        self.console.set_input(self.input);
+        if self.launcher.phase() != Phase::Playing {
+            self.launcher.step(&mut self.console, layout);
+            return;
+        }
+        self.record_history();
+        let report = if self.debug.trace {
+            self.run_frame_traced()
+        } else {
+            self.console.run_frame(self.input)
+        };
+        if let Some(hit) = report.hit {
+            self.running = false;
+            self.steps_left = 0;
+            self.stop = Some(hit);
+        }
+    }
+
+    fn run_frame_traced(&mut self) -> RunReport {
+        let target = self.console.bus().clock.frame.wrapping_add(1);
+        let trace = &mut self.trace;
+        self.console.run_while(self.input, |c| {
+            trace.push(c);
+            c.bus().clock.frame < target
+        })
+    }
+
+    fn record_history(&mut self) {
+        if !self.console.bus().clock.frame.is_multiple_of(REWIND_INTERVAL) {
+            return;
+        }
+        if self.history.len() >= REWIND_DEPTH {
+            self.history.pop_front();
+        }
+        self.history.push_back((self.console.clone(), self.launcher.clone()));
+    }
+
+    fn step_instruction(&mut self) {
+        if self.launcher.phase() == Phase::Playing {
+            if self.debug.trace {
+                self.trace.push(&self.console);
+            }
+            self.stop = self.console.step_instruction().err().map(Hit::Stopped);
+        }
+        self.refresh = true;
+    }
+
+    fn rewind(&mut self) {
+        if let Some((c, l)) = self.history.pop_back() {
+            self.console = c;
+            self.launcher = l;
+        }
+        self.stop = None;
+        self.refresh = true;
+    }
+
+    fn event(&self, layout: &RomLayout, fps: f32) -> FrameEvent {
+        let frame = self.console.frame();
+        FrameEvent {
+            rgba: Arc::from(frame.to_rgba()),
+            width: frame.width(),
+            height: frame.height(),
+            frame: self.console.bus().clock.frame,
+            phase: self.launcher.phase(),
+            game_mode: smw_play::game_mode(&self.console, layout),
+            player: smw_play::player_position(&self.console, layout),
+            fps,
+            debug: DebugSnapshot::capture(&self.console, &self.debug, &self.trace, self.stop),
         }
     }
 }
@@ -321,8 +513,8 @@ mod tests {
             smw_data::level::Level::load(&rom, &layout, smw_data::LevelId::new(0x105).expect("id"))
                 .expect("level");
         let ctx = egui::Context::default();
-        let request = LaunchRequest { level, mario: smw_play::MarioState::default() };
-        let mut session = PlaySession::start(&ctx, &rom, &layout, request);
+        let request = LaunchRequest { level, mario: smw_play::MarioState::default(), pixel: None };
+        let mut session = PlaySession::start(&ctx, &rom, &layout, request, None);
         let deadline = Instant::now().checked_add(Duration::from_secs(45)).expect("deadline");
         let mut playing = None;
         while Instant::now() < deadline {

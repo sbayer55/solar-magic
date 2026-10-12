@@ -65,6 +65,8 @@ pub struct Chip {
     vector: Option<u16>,
     /// `CCNT` bit 5 went low: reset the SA-1 CPU before its next step.
     pending_reset: bool,
+    /// BW-RAM was written since `clear_bwram_dirty`.
+    bwram_dirty: bool,
 }
 
 /// The SA-1 coprocessor.
@@ -94,6 +96,7 @@ impl Sa1 {
             cc2_line: 0,
             vector: None,
             pending_reset: false,
+            bwram_dirty: false,
         };
         Self { cpu: Cpu::new(), chip }
     }
@@ -225,6 +228,17 @@ impl Chip {
     /// BW-RAM contents, writable (loading a save file).
     pub fn bwram_mut(&mut self) -> &mut [u8] {
         &mut self.bwram
+    }
+
+    /// Whether BW-RAM was written since the last `clear_bwram_dirty`.
+    #[must_use]
+    pub const fn bwram_dirty(&self) -> bool {
+        self.bwram_dirty
+    }
+
+    /// Marks BW-RAM as saved.
+    pub const fn clear_bwram_dirty(&mut self) {
+        self.bwram_dirty = false;
     }
 
     /// The SA-1's clock in master cycles.

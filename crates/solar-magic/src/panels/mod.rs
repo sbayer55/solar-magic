@@ -1,5 +1,6 @@
 //! The dockable panels.
 
+mod debug;
 mod exits;
 mod header;
 mod info;
@@ -39,10 +40,12 @@ pub(crate) enum Tab {
     Palette,
     /// The level running in the emulator.
     Play,
+    /// Registers, disassembly, breakpoints, watches, memory, trace.
+    Debug,
 }
 
 /// Every tab, for the Window menu.
-pub(crate) const ALL_TABS: [Tab; 9] = [
+pub(crate) const ALL_TABS: [Tab; 10] = [
     Tab::Level,
     Tab::Levels,
     Tab::Info,
@@ -52,6 +55,7 @@ pub(crate) const ALL_TABS: [Tab; 9] = [
     Tab::Map16,
     Tab::Palette,
     Tab::Play,
+    Tab::Debug,
 ];
 
 impl Tab {
@@ -67,6 +71,7 @@ impl Tab {
             Self::Map16 => "Map16",
             Self::Palette => "Palette",
             Self::Play => "Play",
+            Self::Debug => "Debug",
         }
     }
 }
@@ -116,6 +121,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Map16 => self.map16(ui),
             Tab::Palette => self.palette(ui),
             Tab::Play => self.play_panel(ui),
+            Tab::Debug => self.debug_panel(ui),
         }
     }
 }

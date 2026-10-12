@@ -17,6 +17,7 @@ mod addressing;
 mod bits;
 mod bus;
 mod cpu;
+mod disasm;
 mod flags;
 mod interrupt;
 mod ops;
@@ -24,6 +25,7 @@ mod table;
 
 pub use bus::{Bus, FlatBus};
 pub use cpu::{Cpu, CpuError, Exec, StopReason};
+pub use disasm::{Disassembly, disassemble};
 pub use flags::Flags;
 
 /// A 24-bit address on the bus.

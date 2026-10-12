@@ -120,6 +120,7 @@ impl Chip {
             && let Some(slot) = self.bwram.get_mut(i)
         {
             *slot = v;
+            self.bwram_dirty = true;
         }
     }
 

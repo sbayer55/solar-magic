@@ -53,7 +53,8 @@ pub(crate) fn run(rom_path: &Path, outputs: Outputs<'_>, options: Options) -> an
     };
     let mario = MarioState { powerup, entrance, ..MarioState::default() };
     let mut console = Console::new(&rom, Region::Ntsc);
-    let mut launcher = Launcher::start(&mut console, &rom, &layout, LaunchRequest { level, mario });
+    let mut launcher =
+        Launcher::start(&mut console, &rom, &layout, LaunchRequest { level, mario, pixel: None });
     launcher.run_to_play(&mut console, &layout).context("launching the level")?;
     let launched_at = console.bus().clock.frame;
     let mut discard = Vec::new();

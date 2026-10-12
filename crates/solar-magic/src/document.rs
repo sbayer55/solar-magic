@@ -78,8 +78,13 @@ impl Document {
     }
 
     /// Starts (or restarts) the emulator on the level as currently edited,
-    /// entering at `entrance`.
-    pub(crate) fn start_play(&mut self, ctx: &egui::Context, entrance: smw_play::Entrance) {
+    /// entering at `entrance` (and, with `pixel`, standing exactly there).
+    pub(crate) fn start_play(
+        &mut self,
+        ctx: &egui::Context,
+        entrance: smw_play::Entrance,
+        pixel: Option<(u16, u16)>,
+    ) {
         let level = match self.session.as_ref() {
             Some(session) => session.level.clone(),
             None => match Level::load(&self.rom, &self.layout, self.level) {
@@ -91,16 +96,14 @@ impl Document {
             },
         };
         let mario = smw_play::MarioState { entrance, ..smw_play::MarioState::default() };
-        let request = smw_play::LaunchRequest { level, mario };
-        match self.play.as_mut() {
-            Some(play) => {
-                play.running = true;
-                play.send(crate::play::Command::Relaunch(Box::new(request)));
-            }
-            None => {
-                self.play =
-                    Some(crate::play::PlaySession::start(ctx, &self.rom, &self.layout, request));
-            }
+        let request = smw_play::LaunchRequest { level, mario, pixel };
+        if let Some(play) = self.play.as_mut() {
+            play.running = true;
+            play.send(crate::play::Command::Relaunch(Box::new(request)));
+        } else {
+            let srm = Some(self.path.with_extension("srm"));
+            self.play =
+                Some(crate::play::PlaySession::start(ctx, &self.rom, &self.layout, request, srm));
         }
         self.status = format!("playing level {}", self.level);
     }
