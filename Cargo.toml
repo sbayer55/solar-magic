@@ -24,6 +24,7 @@ egui_dock = "0.21"
 rfd = "0.17"
 smw-data = { path = "crates/smw-data" }
 ips = { path = "crates/ips" }
+spc700 = { path = "crates/spc700" }
 snes-ppu = { path = "crates/snes-ppu" }
 snes-apu = { path = "crates/snes-apu" }
 snes-core = { path = "crates/snes-core" }

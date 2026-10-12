@@ -46,6 +46,20 @@ pub(crate) fn run(rom: &Path, frames: u32, trace: usize) -> anyhow::Result<()> {
         println!("stopped: {hit:?}");
     }
     println!("game mode ($7E:0100): {:02X}", console.peek(0x7E_0100));
+    let apu = &console.bus().apu;
+    println!(
+        "apu: pc {:04X} cycles {} ports in {:02X?} out {:02X?} rom_enabled {}",
+        apu.cpu.pc,
+        apu.cycles(),
+        apu.smp.inbox,
+        apu.smp.outbox,
+        apu.smp.rom_enabled
+    );
+    let vram_used = console.bus().ppu.vram.words().iter().filter(|&&w| w != 0).count();
+    println!(
+        "vram nonzero words: {vram_used}  forced blank: {}",
+        console.bus().ppu.regs.forced_blank
+    );
     println!(
         "nmi enabled: {}  vblank: {}  v: {}",
         console.bus().regs.irq.nmi_enable,

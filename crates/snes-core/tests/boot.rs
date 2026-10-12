@@ -21,15 +21,27 @@ fn run_frames(rom: &Rom, frames: u32) -> Console {
     console
 }
 
-/// Without an APU the game waits for the `$BBAA` handshake forever: the CPU
-/// must be parked in that loop with the expected signature in A.
+/// The boot-ROM handshake and the sound-driver upload complete, and the game
+/// reaches its title screen (game mode `$07`) with the display enabled.
 #[test]
-fn boot_reaches_the_apu_handshake_wait() {
+fn boot_reaches_the_title_screen() {
     let Some(rom) = smw() else { return };
-    let console = run_frames(&rom, 30);
-    assert_eq!(console.cpu().a, 0xBBAA);
-    assert_eq!(console.cpu().pb, 0);
-    assert!(!console.cpu().e, "the game switches to native mode before the handshake");
+    let mut console = Console::new(&rom, Region::Ntsc);
+    let mut mode = 0;
+    for _ in 0..600 {
+        console.run_frame(Input::default());
+        mode = console.peek(0x7E_0100);
+        if mode == 0x07 {
+            break;
+        }
+    }
+    assert_eq!(mode, 0x07, "game mode after 600 frames");
+    let bus = console.bus();
+    assert!(!bus.apu.smp.rom_enabled, "the sound driver should have unmapped the boot ROM");
+    assert!(bus.apu.cpu.pc < 0xFFC0, "the SPC700 should be running the uploaded driver");
+    assert!(!bus.ppu.regs.forced_blank);
+    assert!(bus.regs.irq.nmi_enable);
+    assert!(bus.ppu.vram.words().iter().filter(|&&w| w != 0).count() > 10_000);
 }
 
 #[test]

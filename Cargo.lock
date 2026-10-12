@@ -3738,6 +3738,9 @@ dependencies = [
 [[package]]
 name = "snes-apu"
 version = "0.1.0"
+dependencies = [
+ "spc700",
+]
 
 [[package]]
 name = "snes-core"
@@ -3794,6 +3797,14 @@ dependencies = [
  "smw-data",
  "smw-render",
  "snes-rom",
+]
+
+[[package]]
+name = "spc700"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

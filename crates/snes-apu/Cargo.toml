@@ -9,6 +9,7 @@ repository.workspace = true
 authors.workspace = true
 
 [dependencies]
+spc700 = { path = "../spc700" }
 
 [lints]
 workspace = true

@@ -68,7 +68,7 @@ impl SystemBus {
             wram: Wram::new(),
             regs: CpuRegs::new(),
             ppu: Ppu::new(matches!(region, crate::clock::Region::Pal)),
-            apu: Apu::new(),
+            apu: Apu::default(),
             cart,
             dma: Dma::new(),
             overlays: Vec::new(),
@@ -129,6 +129,7 @@ impl SystemBus {
             self.ppu.frame_start(self.clock.field);
         }
         if ev.contains(Events::LINE_START) {
+            self.apu.run_to(self.clock.now);
             self.clock.overscan = self.ppu.overscan();
             if self.clock.v == self.clock.vdisp() {
                 self.ppu.vblank_start();
