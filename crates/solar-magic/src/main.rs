@@ -5,16 +5,19 @@ mod document;
 mod edit;
 mod ips_tool;
 mod panels;
+mod play;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// `solar-magic [ROM] [LEVEL-HEX]`: optional ROM path and level to open.
+/// `solar-magic [ROM] [LEVEL-HEX] [--play]`: optional ROM path and level to
+/// open; `--play` starts the level in the emulator right away.
 fn parse_args() -> app::Launch {
     let mut args = std::env::args_os().skip(1);
     let rom = args.next().map(PathBuf::from);
     let level = args.next().and_then(|a| u16::from_str_radix(&a.to_string_lossy(), 16).ok());
-    app::Launch { rom, level }
+    let play = args.any(|a| a == "--play");
+    app::Launch { rom, level, play }
 }
 
 #[allow(clippy::print_stderr, reason = "startup failure goes to stderr")]

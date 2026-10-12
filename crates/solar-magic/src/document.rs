@@ -37,6 +37,8 @@ pub(crate) struct Document {
     pub(crate) pending_exits: BTreeMap<ExitId, SecondaryExit>,
     /// Last message for the status bar.
     pub(crate) status: String,
+    /// The level running in the emulator, if started.
+    pub(crate) play: Option<crate::play::PlaySession>,
 }
 
 impl std::fmt::Debug for Document {
@@ -69,9 +71,36 @@ impl Document {
             rendered_with: None,
             pending_exits: BTreeMap::new(),
             status: String::new(),
+            play: None,
         };
         doc.select(level);
         Ok(doc)
+    }
+
+    /// Starts (or restarts) the emulator on the level as currently edited.
+    pub(crate) fn start_play(&mut self, ctx: &egui::Context) {
+        let level = match self.session.as_ref() {
+            Some(session) => session.level.clone(),
+            None => match Level::load(&self.rom, &self.layout, self.level) {
+                Ok(level) => level,
+                Err(err) => {
+                    self.status = format!("cannot play: {err}");
+                    return;
+                }
+            },
+        };
+        let request = smw_play::LaunchRequest { level, mario: smw_play::MarioState::default() };
+        match self.play.as_mut() {
+            Some(play) => {
+                play.running = true;
+                play.send(crate::play::Command::Relaunch(Box::new(request)));
+            }
+            None => {
+                self.play =
+                    Some(crate::play::PlaySession::start(ctx, &self.rom, &self.layout, request));
+            }
+        }
+        self.status = format!("playing level {}", self.level);
     }
 
     /// Loads another level, discarding any edits.

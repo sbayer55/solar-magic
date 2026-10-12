@@ -22,7 +22,9 @@ rfd.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 smw-data.workspace = true
+smw-play.workspace = true
 smw-render.workspace = true
+snes-core.workspace = true
 snes-rom.workspace = true
 
 [lints]

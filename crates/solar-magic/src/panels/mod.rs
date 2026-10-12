@@ -8,6 +8,7 @@ mod levels;
 mod map16;
 mod overlays;
 mod palette;
+mod play;
 mod tools;
 
 use egui_dock::TabViewer;
@@ -36,10 +37,12 @@ pub(crate) enum Tab {
     Map16,
     /// The 16×16 palette.
     Palette,
+    /// The level running in the emulator.
+    Play,
 }
 
 /// Every tab, for the Window menu.
-pub(crate) const ALL_TABS: [Tab; 8] = [
+pub(crate) const ALL_TABS: [Tab; 9] = [
     Tab::Level,
     Tab::Levels,
     Tab::Info,
@@ -48,6 +51,7 @@ pub(crate) const ALL_TABS: [Tab; 8] = [
     Tab::Exits,
     Tab::Map16,
     Tab::Palette,
+    Tab::Play,
 ];
 
 impl Tab {
@@ -62,6 +66,7 @@ impl Tab {
             Self::Exits => "Exits",
             Self::Map16 => "Map16",
             Self::Palette => "Palette",
+            Self::Play => "Play",
         }
     }
 }
@@ -108,6 +113,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Exits => self.exits_panel(ui),
             Tab::Map16 => self.map16(ui),
             Tab::Palette => self.palette(ui),
+            Tab::Play => self.play_panel(ui),
         }
     }
 }

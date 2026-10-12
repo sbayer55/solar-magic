@@ -3807,7 +3807,9 @@ dependencies = [
  "serde",
  "serde_json",
  "smw-data",
+ "smw-play",
  "smw-render",
+ "snes-core",
  "snes-rom",
 ]
 
