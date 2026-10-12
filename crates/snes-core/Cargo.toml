@@ -13,6 +13,7 @@ w65c816.workspace = true
 snes-rom.workspace = true
 snes-ppu.workspace = true
 snes-apu.workspace = true
+snes-sa1.workspace = true
 bitflags.workspace = true
 thiserror.workspace = true
 

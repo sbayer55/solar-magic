@@ -27,6 +27,7 @@ ips = { path = "crates/ips" }
 spc700 = { path = "crates/spc700" }
 snes-ppu = { path = "crates/snes-ppu" }
 snes-apu = { path = "crates/snes-apu" }
+snes-sa1 = { path = "crates/snes-sa1" }
 snes-core = { path = "crates/snes-core" }
 smw-play = { path = "crates/smw-play" }
 # external
@@ -34,6 +35,7 @@ anyhow = "1.0"
 bitflags = "2.13"
 clap = { version = "4.6", features = ["derive"] }
 cpal = "0.18"
+gilrs = "0.11"
 hound = "3.5"
 rtrb = "0.4"
 image = { version = "0.25", default-features = false, features = ["png", "bmp"] }

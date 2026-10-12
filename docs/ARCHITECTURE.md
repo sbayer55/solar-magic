@@ -15,9 +15,9 @@ solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump/patch/emu tools)
         │                     ips           │                  ▼
         └──────────────┬────────────────────┘              snes-core   the machine: clock, bus,
                                                                │       DMA, cart, Console
-                       ▼                              ┌────────┼────────┐
-                  smw-render        Level → grid      ▼        ▼        ▼
-                       │            → RGBA raster  snes-ppu  snes-apu  (snes-rom, w65c816)
+                       ▼                         ┌────────┬───┴────┬────────┐
+                  smw-render        Level → grid ▼        ▼        ▼        ▼
+                       │            → RGBA raster snes-ppu snes-apu snes-sa1 (snes-rom, w65c816)
                        ▼
                    smw-data         SMW formats: RomLayout, headers, objects,
                        │            sprites, Map16, GFX, palettes
@@ -43,6 +43,7 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 | `snes-ppu` | renders modes 0-7 | `Ppu`: `$2100-$213F` decoded into `Regs`, `Vram`/`Oam`/`Cgram` with their port quirks, counter latches, open-bus bits; renderer with per-line layer buffers and per-dot compositing (sprites with the 32/34 limits, windows, colour math, direct colour, mosaic, mode 7 + EXTBG), BGR555 `Frame`. Hi-res/interlace/offset-per-tile pending. `docs/emulation/ppu.md`. |
 | `spc700` | done | Cycle-exact SPC700 core (`Spc700`, `ApuBus`, 256-entry table); passes all 256 SingleStepTests files with exact cycle sequences (`SPC700_TESTS_DIR`). |
 | `snes-apu` | done | `Apu`/`Smp`: 64 KiB RAM, `$F0-$FF` registers, timers, CPU ports, exact master↔SPC clock ratio, boot ROM modelled at port level (`Ipl::Hle`) or supplied (`Ipl::Rom`); `Dsp`: eight BRR voices with Gaussian interpolation, ADSR/GAIN, noise, echo FIR and mixer at 32 kHz (`take_audio`). `docs/emulation/apu.md`. |
+| `snes-sa1` | unit-tested only | `Sa1`: second `w65c816::Cpu` over its own bus with I-RAM, BW-RAM (linear, windowed, bitmap), Super MMC, programmable vectors, interrupts both ways, H/V timer, DMA and character conversion, arithmetic unit, bit reader; behind `snes-core`'s `Coprocessor` trait. No SA-1 ROM available locally. `docs/emulation/sa1.md`. |
 | `snes-core` | boots SMW to the title screen | `Clock` (master cycles, lines, dots, events), `SystemBus` (speeds, open bus, routing, lazy catch-up), `CpuRegs` (NMI/IRQ, ALU, joypads), `Dma` (GPDMA/HDMA), `Cartridge` (ROM, SRAM, `Coprocessor` hook), `Console` facade (run frames, breakpoints, peek/poke, overlays). `docs/emulation/{timing,memory-map}.md`. |
 | `smw-play` | launches levels | `Launcher`: boots to the title screen, pokes player state and game mode, substitutes the level number at the entry routine's breakpoint, overlays unsaved edits (`docs/formats/smw-launch-protocol.md`). `MarioState`, `Entrance::{Main, Midway, SecondaryExit, Position}`. |
 | `smw-render` | viewer, LM 2.5x, ownership | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |

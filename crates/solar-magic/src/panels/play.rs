@@ -33,12 +33,15 @@ impl Viewer<'_> {
         if response.clicked() {
             response.request_focus();
         }
-        if response.has_focus() || response.hovered() {
-            let input = read_input(ui, &play.keys);
-            play.set_input(input);
+        let mut input = if response.has_focus() || response.hovered() {
+            read_input(ui, &play.keys)
         } else {
-            play.set_input(snes_core::Input::default());
+            snes_core::Input::default()
+        };
+        if let Some(pads) = play.gamepads.as_mut() {
+            input.p1 |= pads.read();
         }
+        play.set_input(input);
         status(ui, play);
     }
 }

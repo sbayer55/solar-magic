@@ -141,13 +141,21 @@ impl Console {
         match bank {
             0x7E | 0x7F => self.bus.wram.read(addr & 0x1_FFFF),
             0x00..=0x3F | 0x80..=0xBF if offset < 0x2000 => self.bus.wram.read(offset),
-            0x00..=0x3F | 0x80..=0xBF if offset < 0x8000 => 0,
+            0x00..=0x3F | 0x80..=0xBF if offset < 0x8000 => self.peek_copro(addr).unwrap_or(0),
             _ => self.peek_cart(addr),
         }
     }
 
+    /// A coprocessor's memories (the SA-1's I-RAM and BW-RAM).
+    fn peek_copro(&self, addr: Addr) -> Option<u8> {
+        self.bus.cart.copro.as_ref().and_then(|c| c.peek(addr))
+    }
+
     fn peek_cart(&self, addr: Addr) -> u8 {
         use snes_rom::Mapper;
+        if let Some(v) = self.peek_copro(addr) {
+            return v;
+        }
         if let Some(v) = self.bus.overlays.iter().find_map(|o| {
             let index = usize::try_from(addr.checked_sub(o.start)?).ok()?;
             o.bytes.get(index).copied()

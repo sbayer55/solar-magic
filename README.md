@@ -30,7 +30,7 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | G5 direct Map16 paint tool | pending (needs Lunar Magic's object format) |
 | Lunar Magic ROM compatibility, rendering fidelity (sprites, priority, layer 3), overworld | planned, see `docs/ARCHITECTURE.md` |
 | Tools: IPS patcher (`solar ips-apply` / `ips-create` / `ips-info`, GUI Tools → IPS Patcher) | done: Lunar IPS parity (RLE, expand/truncate, apply log, copier-header add/strip) |
-| In-house SNES emulator (`snes-core`, `snes-ppu`, `spc700`, `snes-apu`, `smw-play`; `solar emu-boot`, `solar play 105 --out frame.png`) | E0–E4 done: cycle-exact 65c816 and SPC700, machine core, S-SMP with boot-ROM handshake, PPU renderer (modes 0-7, sprites, windows, colour math), launch straight into any level with unsaved edits (main/midway/secondary-exit entrances). Tools → Play Level (Ctrl+T) runs the edited level in the editor with keyboard input and sound (S-DSP). SA-1, hi-res/offset-per-tile PPU modes, test-ROM goldens next (`docs/emulation/`) |
+| In-house SNES emulator (`snes-core`, `snes-ppu`, `spc700`, `snes-apu`, `snes-sa1`, `smw-play`; `solar emu-boot`, `solar play 105 --out frame.png`) | E0–E8: cycle-exact 65c816 and SPC700, machine core, S-SMP with boot-ROM handshake and S-DSP sound, PPU renderer (modes 0-7, hi-res, interlace, offset-per-tile, sprites, windows, colour math; 56 of krom's 73 test ROMs match their screenshots), SA-1 coprocessor (unit-tested; no SA-1 ROM locally), launch straight into any level with unsaved edits (main/midway/secondary-exit entrances). Tools → Play Level (Ctrl+T) runs the edited level in the editor with keyboard or gamepad (`--features gamepad`) input and sound. Debugger panel and `.srm` saves next (`docs/emulation/`) |
 
 ## Try it
 

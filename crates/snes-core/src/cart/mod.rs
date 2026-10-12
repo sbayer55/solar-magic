@@ -1,24 +1,35 @@
 //! The cartridge: ROM through the mapper, battery RAM, and an optional
-//! coprocessor that may claim addresses before the plain mapping does.
+//! coprocessor that may claim addresses before the plain mapping does
+//! (the SA-1 claims all of them: its Super MMC owns the ROM map).
 
+mod sa1_glue;
 mod sram;
 
 use std::sync::Arc;
 
 use snes_rom::{Mapper, MapperKind, Rom, SnesAddr};
 
+pub use sa1_glue::Sa1Copro;
 pub use sram::Sram;
 
-/// A chip on the cartridge that sits on the bus (SA-1 later).
+/// A chip on the cartridge that sits on the bus.
 pub trait Coprocessor: core::fmt::Debug + Send {
     /// Reads `addr` if the chip decodes it; `now` is the master clock.
     fn read(&mut self, addr: u32, now: u64) -> Option<u8>;
+    /// A side-effect-free read of the chip's memories (debuggers).
+    fn peek(&self, addr: u32) -> Option<u8>;
     /// Writes `addr` if the chip decodes it; returns whether it did.
     fn write(&mut self, addr: u32, v: u8, now: u64) -> bool;
     /// Lets the chip catch up to the master clock.
     fn run_to(&mut self, now: u64);
     /// Whether the chip asserts the cartridge IRQ line.
     fn irq_pending(&self) -> bool;
+    /// The console's reset line; `now` is the master clock afterwards.
+    fn reset(&mut self, now: u64);
+    /// Battery-backed memory the chip owns (the SA-1's BW-RAM).
+    fn battery(&self) -> Option<&[u8]>;
+    /// Battery-backed memory, writable (loading a save).
+    fn battery_mut(&mut self) -> Option<&mut [u8]>;
     /// A deep copy, for save states.
     fn boxed_clone(&self) -> Box<dyn Coprocessor>;
 }
@@ -59,7 +70,15 @@ impl Cartridge {
         let bytes: Arc<[u8]> = Arc::from(image);
         let len = bytes.len();
         let rom_mask = if len.is_power_of_two() { Some(len.wrapping_sub(1)) } else { None };
-        Self { rom: bytes, rom_mask, mapper, sram: Sram::new(sram_len), fast_rom, copro: None }
+        // An SA-1 board's save RAM is the chip's BW-RAM (NTSC timer; the
+        // region only sets the timer's line count).
+        let copro: Option<Box<dyn Coprocessor>> = match mapper {
+            MapperKind::Sa1(_) => {
+                Some(Box::new(Sa1Copro(snes_sa1::Sa1::new(Arc::clone(&bytes), sram_len, false))))
+            }
+            MapperKind::LoRom(_) | MapperKind::ExLoRom(_) | _ => None,
+        };
+        Self { rom: bytes, rom_mask, mapper, sram: Sram::new(sram_len), fast_rom, copro }
     }
 
     /// The ROM image.

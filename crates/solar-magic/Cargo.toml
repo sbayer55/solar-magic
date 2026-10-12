@@ -12,9 +12,14 @@ authors.workspace = true
 name = "solar-magic"
 path = "src/main.rs"
 
+[features]
+# Gamepad input in the Play panel (gilrs; needs libudev-dev on Linux).
+gamepad = ["dep:gilrs"]
+
 [dependencies]
 anyhow.workspace = true
 cpal.workspace = true
+gilrs = { workspace = true, optional = true }
 eframe.workspace = true
 egui.workspace = true
 egui_dock.workspace = true

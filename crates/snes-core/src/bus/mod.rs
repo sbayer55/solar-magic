@@ -86,6 +86,9 @@ impl SystemBus {
         self.dma = Dma::new();
         self.mdr = 0;
         self.in_dma = false;
+        if let Some(copro) = self.cart.copro.as_mut() {
+            copro.reset(self.clock.now);
+        }
     }
 
     /// Master cycles one CPU access to `addr` takes.
@@ -131,6 +134,9 @@ impl SystemBus {
         if ev.contains(Events::LINE_START) {
             self.ppu.run_to(self.clock.position());
             self.apu.run_to(self.clock.now);
+            if let Some(copro) = self.cart.copro.as_mut() {
+                copro.run_to(self.clock.now);
+            }
             self.clock.overscan = self.ppu.overscan();
             if self.clock.v == self.clock.vdisp() {
                 self.ppu.vblank_start();

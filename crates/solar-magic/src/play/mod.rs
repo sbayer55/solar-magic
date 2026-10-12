@@ -2,6 +2,7 @@
 //! the console's frame rate, and hands finished pictures to the UI.
 
 mod audio;
+mod gamepad;
 mod input;
 
 use std::sync::Arc;
@@ -14,6 +15,7 @@ use smw_play::{LaunchRequest, Launcher, Phase};
 use snes_core::{Console, Input, Region};
 use snes_rom::Rom;
 
+pub(crate) use gamepad::Gamepads;
 pub(crate) use input::{KeyMap, read_input};
 
 /// Master cycles per NTSC frame (262 lines of 1364, minus the short line).
@@ -78,6 +80,8 @@ pub(crate) struct PlaySession {
     pub(crate) input: Input,
     /// Key bindings.
     pub(crate) keys: KeyMap,
+    /// Gamepads (feature `gamepad`).
+    pub(crate) gamepads: Option<Gamepads>,
 }
 
 impl std::fmt::Debug for PlaySession {
@@ -111,6 +115,7 @@ impl PlaySession {
             zoom: 2,
             input: Input::default(),
             keys: KeyMap::default(),
+            gamepads: Gamepads::new(),
         }
     }
 
