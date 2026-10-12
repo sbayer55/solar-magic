@@ -11,6 +11,7 @@ mod dump_gfx;
 mod dump_level;
 mod dump_map16;
 mod dump_owners;
+mod emu_bench;
 mod emu_boot;
 mod expand;
 mod free_space;
@@ -259,6 +260,17 @@ enum Command {
         #[arg(long)]
         raw: bool,
     },
+    /// Times the in-house emulator: frames per second after a warm-up.
+    EmuBench {
+        /// ROM file.
+        rom: PathBuf,
+        /// Frames to time.
+        #[arg(long, default_value_t = 600)]
+        frames: u32,
+        /// Frames to run first (boot) without timing.
+        #[arg(long, default_value_t = 120)]
+        warmup: u32,
+    },
     /// Boots the in-house emulator and plays straight into a level.
     Play {
         /// ROM file.
@@ -304,6 +316,7 @@ fn main() -> ExitCode {
         Command::EmuBoot { rom, frames, trace, out, raw } => {
             emu_boot::run(&rom, frames, trace, out.as_deref(), raw)
         }
+        Command::EmuBench { rom, frames, warmup } => emu_bench::run(&rom, frames, warmup),
         Command::Play { rom, level, frames, midway, exit, powerup, out, audio } => play::run(
             &rom,
             play::Outputs { image: out.as_deref(), audio: audio.as_deref() },
