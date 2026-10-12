@@ -1,9 +1,15 @@
 //! Undoable edits.
 
+use std::collections::BTreeMap;
+
 use smw_data::level::{
-    BitField, EditError, Layer, Level, ObjectSpec, RawObject, ScreenExitInfo, Sprite, SpriteSpec,
-    TilePos,
+    BitField, EditError, ExitId, Layer, Level, ObjectSpec, RawObject, ScreenExitInfo,
+    SecondaryExit, Sprite, SpriteSpec, TilePos,
 };
+
+/// Secondary exits edited alongside a level, keyed by exit number. They are
+/// ROM-global, so they live next to the level rather than inside it.
+pub(crate) type SecondaryExits = BTreeMap<ExitId, SecondaryExit>;
 
 /// One undoable change to a level.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -83,6 +89,13 @@ pub(crate) enum EditCommand {
         /// New count.
         screens: u8,
     },
+    /// Set a secondary exit's four table bytes.
+    SetSecondaryExit {
+        /// Exit number.
+        id: ExitId,
+        /// New bytes.
+        exit: SecondaryExit,
+    },
     /// Set or remove a screen exit.
     SetScreenExit {
         /// Screen.
@@ -115,9 +128,17 @@ fn shifted(pos: TilePos, delta: (i32, i32)) -> TilePos {
 }
 
 impl EditCommand {
-    /// Applies the command to `level`.
-    pub(crate) fn apply(&self, level: &mut Level) -> Result<(), EditError> {
+    /// Applies the command to `level` (or to the secondary exits beside it).
+    pub(crate) fn apply(
+        &self,
+        level: &mut Level,
+        exits: &mut SecondaryExits,
+    ) -> Result<(), EditError> {
         match self {
+            Self::SetSecondaryExit { id, exit } => {
+                exits.insert(*id, *exit);
+                Ok(())
+            }
             Self::MoveObjects { layer, indices, delta } => {
                 move_objects(level, *layer, indices, *delta)
             }
@@ -221,6 +242,7 @@ impl EditCommand {
             Self::SetHeaderField { .. } | Self::SetSecondaryField { .. } => "edit header",
             Self::SetScreens { .. } => "set screens",
             Self::SetScreenExit { .. } => "edit screen exit",
+            Self::SetSecondaryExit { .. } => "edit secondary exit",
             Self::PasteObjects { .. } | Self::PasteSprites { .. } => "paste",
         }
     }

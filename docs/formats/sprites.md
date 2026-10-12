@@ -32,5 +32,5 @@ The loader swaps the roles of the two position fields exactly as it does for
 objects: `YYYY` plus the `y` bit hold the X tile (0–31 across the 32-wide
 screen; the `y` bit is X bit 4), the screen bits hold the vertical screen
 number, and `XXXX` holds the Y tile within the 16-row screen. The extra bits
-stay in bits 2–3 of byte 0. `Sprite::position` / `Sprite::with_position` in
+stay in bits 2–3 of byte 0. `Sprite::position` / `Sprite::at` / `Sprite::place` in
 `crates/smw-data/src/level/edit.rs` implement both orientations.

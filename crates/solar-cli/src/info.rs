@@ -48,6 +48,23 @@ pub(crate) fn run(path: &Path) -> anyhow::Result<()> {
         println!("  ... {} more", tags.len().saturating_sub(16));
     }
 
+    let markers = smw_data::layout::scan_markers(&rom);
+    println!("LM markers:      {}", markers.len());
+    for m in markers.iter().take(8) {
+        let placement = match m.placement {
+            smw_data::layout::MarkerPlacement::BlockEnd(tag) => {
+                format!("ends block of {} bytes", tag.data_len)
+            }
+            smw_data::layout::MarkerPlacement::RoutinePrefix => "routine prefix".to_owned(),
+            smw_data::layout::MarkerPlacement::Loose => "loose".to_owned(),
+        };
+        let addr = m.addr.map_or_else(String::new, |a| a.to_string());
+        println!("  {:#08X} {addr}  kind {:02X} rev {:02X}  {placement}", m.pc, m.kind, m.revision);
+    }
+    if markers.len() > 8 {
+        println!("  ... {} more", markers.len().saturating_sub(8));
+    }
+
     match RomLayout::detect(&rom) {
         Ok(layout) => {
             println!("layout:          {}", layout.kind);
@@ -84,6 +101,8 @@ fn print_lunar_magic_summary(rom: &Rom, layout: &RomLayout) -> anyhow::Result<()
         })
         .count();
     println!("  signature:     {:?}", RomLayout::lunar_magic_signature(rom).unwrap_or_default());
+    println!("  features:      {}", lm.features.names().join(" "));
+    println!("  flags format:  {:?}", lm.layer2_flags_format);
     println!("  relocated layer 2 tilemaps: {relocated} ({sixteen_bit} 16-bit)");
     println!("  custom palettes: {palettes}");
     println!("  ExGFX 80-FF inserted: {exgfx}");

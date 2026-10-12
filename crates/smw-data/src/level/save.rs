@@ -243,12 +243,14 @@ impl<'a> Saver<'a> {
             // kinds differ, so the data cannot be compared or reused.
             Layer2::Objects { .. } => {
                 let bytes = level.layer2_bytes();
-                if let Some(shared) = self.identical_block(&bytes, None, None) {
+                let placement = if let Some(shared) = self.identical_block(&bytes, None, None) {
                     self.write_pointer(Slot::Layer2, shared)?;
                     Placement::Shared(shared)
                 } else {
                     self.relocate_fresh(&bytes, Slot::Layer2)?
-                }
+                };
+                self.release_old_layer2()?;
+                placement
             }
             Layer2::Background { tiles, .. } => {
                 let page = tiles.first().map_or(0, |t| t.to_le_bytes()[1] & 1);
@@ -269,9 +271,14 @@ impl<'a> Saver<'a> {
         })
     }
 
-    /// Whether only this level points at `addr`.
+    /// Whether only this level points at `addr`. Backgrounds are keyed by
+    /// their stored `$FF`-bank pointer, so both spellings are checked.
     fn unshared(&self, addr: SnesAddr) -> bool {
-        self.refs.get(&addr).is_none_or(|ids| ids.iter().all(|id| *id == self.level.id))
+        let mine = |ids: &Vec<LevelId>| ids.iter().all(|id| *id == self.level.id);
+        let stored = (addr.bank() == LAYER2_BACKGROUND_REAL_BANK)
+            .then(|| SnesAddr::from_parts(LAYER2_BACKGROUND_BANK, addr.offset()));
+        self.refs.get(&addr).is_none_or(mine)
+            && stored.and_then(|s| self.refs.get(&s)).is_none_or(mine)
     }
 
     /// Whether the bytes at `addr` already equal `bytes`.
@@ -342,6 +349,7 @@ impl<'a> Saver<'a> {
             && let Some(shared) = self.identical_block(bytes, None, None)
         {
             self.write_pointer(slot, shared)?;
+            self.release(addr, unshared)?;
             return Ok(Placement::Shared(shared));
         }
         let placement = self.relocate_fresh(bytes, slot).map_err(|e| {
@@ -351,11 +359,31 @@ impl<'a> Saver<'a> {
                 e
             }
         })?;
-        if unshared && let Some(old) = old_tag {
+        self.release(addr, unshared)?;
+        Ok(placement)
+    }
+
+    /// Frees the RATS-tagged block at `addr` once nothing points at it any
+    /// more (`unshared` = this level was its only user). Untagged vanilla
+    /// data is left alone.
+    fn release(&mut self, addr: SnesAddr, unshared: bool) -> Result<(), SaveError> {
+        if !unshared {
+            return Ok(());
+        }
+        let pc = self.rom.pc(addr)?;
+        if let Some(old) = rats::tag_before(self.rom.bytes(), pc) {
             rats::free(self.rom, old)?;
             self.freed.push(old);
         }
-        Ok(placement)
+        Ok(())
+    }
+
+    /// Releases the block the slot's layer 2 pointer referred to before the
+    /// save, used when layer 2 changes kind (objects ↔ background).
+    fn release_old_layer2(&mut self) -> Result<(), SaveError> {
+        let raw = self.current.layer2_raw;
+        let unshared = self.unshared(raw);
+        self.release(real_address(raw), unshared)
     }
 
     /// Writes `bytes` to a new block in expanded space and points `slot` at it.
@@ -388,16 +416,26 @@ impl<'a> Saver<'a> {
     fn place_background(&mut self, page: u8) -> Result<Placement, SaveError> {
         let bytes = self.level.layer2_bytes();
         if self.current.layer2_raw.bank() != LAYER2_BACKGROUND_BANK {
-            // The slot holds objects today; a background needs a fresh block.
-            let tag =
-                self.alloc_in_bank("background", &bytes, LAYER2_BACKGROUND_REAL_BANK, Some(page))?;
-            let new_addr = self
-                .rom
-                .mapper()
-                .to_snes(tag.data_pc)
-                .ok_or(RomError::Unmapped(self.layout.layer2_ptrs))?;
-            self.write_pointer(Slot::Layer2, new_addr)?;
-            return Ok(Placement::Relocated { tag, addr: new_addr });
+            // The slot holds objects today: share an identical tilemap some
+            // other level stores, or allocate a fresh block.
+            let bank = LAYER2_BACKGROUND_REAL_BANK;
+            let placement =
+                if let Some(shared) = self.identical_block(&bytes, Some(bank), Some(page)) {
+                    Placement::Shared(shared)
+                } else {
+                    let tag = self.alloc_in_bank("background", &bytes, bank, Some(page))?;
+                    let addr = self
+                        .rom
+                        .mapper()
+                        .to_snes(tag.data_pc)
+                        .ok_or(RomError::Unmapped(self.layout.layer2_ptrs))?;
+                    Placement::Relocated { tag, addr }
+                };
+            if let Some(new_addr) = placement.new_addr() {
+                self.write_pointer(Slot::Layer2, new_addr)?;
+            }
+            self.release_old_layer2()?;
+            return Ok(placement);
         }
         let addr = self.current.layer2;
         let target = BankTarget { bank: LAYER2_BACKGROUND_REAL_BANK, page: Some(page) };
@@ -652,6 +690,106 @@ mod tests {
         assert_eq!(addr.bank(), layout.sprite_bank);
         let final_level = Level::load(&rom, &layout, id).expect("reloads");
         assert_eq!(final_level.sprite_bytes(), bigger.sprite_bytes());
+        assert!(rom.checksum_matches());
+    }
+
+    /// A re-encoded background must not overwrite the vanilla block that
+    /// hundreds of levels share, even though the tiles are unchanged.
+    #[test]
+    fn real_rom_background_rewrite_never_touches_the_shared_block() {
+        let Some(mut rom) = rom() else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let layout = RomLayout::detect(&rom).expect("vanilla");
+        let id = LevelId::new(0x105).expect("valid");
+        let mut level = Level::load(&rom, &layout, id).expect("loads");
+        let shared_pc = rom.pc(level.addresses.layer2).expect("mapped");
+        let before = rom.bytes().get(shared_pc..shared_pc + 0x200).expect("in range").to_vec();
+        // A compressible edit (every tile blank) that bank $0C's free space can hold.
+        for index in 0..0x400 {
+            level.layer2.set_background_tile(index, 0x25).expect("background");
+        }
+        assert_ne!(level.layer2_bytes(), before[..level.layer2_bytes().len()].to_vec());
+        let report = save_level(&mut rom, &layout, &level, &SaveOptions::default()).expect("saves");
+        assert!(!matches!(report.layer2, Placement::InPlace(_)), "{:?}", report.layer2);
+        assert_eq!(rom.bytes().get(shared_pc..shared_pc + 0x200).expect("in range"), &before[..]);
+        let reloaded = Level::load(&rom, &layout, id).expect("reloads");
+        assert_eq!(reloaded.layer2_bytes(), level.layer2_bytes());
+    }
+
+    #[test]
+    fn real_rom_reverting_an_edit_frees_the_relocated_block() {
+        let Some(mut rom) = rom() else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let layout = RomLayout::detect(&rom).expect("vanilla");
+        let source =
+            Level::load(&rom, &layout, LevelId::new(0x105).expect("valid")).expect("loads");
+        let mut copy = source.clone();
+        copy.id = LevelId::new(0x1FF).expect("valid");
+        save_level(&mut rom, &layout, &copy, &SaveOptions::default()).expect("saves");
+
+        // Removing an object from the copy relocates its (now shorter) layer 1
+        // into a fresh tagged block.
+        let mut edited = copy.clone();
+        let first = edited
+            .layer1
+            .objects
+            .iter()
+            .position(|o| o.position(false).is_some())
+            .expect("has objects");
+        edited.remove_object(crate::level::Layer::One, first).expect("removes");
+        let moved = save_level(&mut rom, &layout, &edited, &SaveOptions::default()).expect("saves");
+        let Placement::Relocated { tag, .. } = moved.layer1 else {
+            panic!("expected relocation, got {:?}", moved.layer1);
+        };
+
+        // The original bytes no longer fit that block, so saving them again
+        // shares 105's block and frees the tag.
+        let back = save_level(&mut rom, &layout, &copy, &SaveOptions::default()).expect("saves");
+        assert_eq!(back.layer1, Placement::Shared(source.addresses.layer1));
+        assert_eq!(back.freed, vec![tag], "the relocated block is released");
+        let tags = snes_rom::rats::scan(rom.bytes());
+        assert!(!tags.contains(&tag));
+    }
+
+    #[test]
+    fn real_rom_layer2_kind_switch_frees_old_block() {
+        let Some(mut rom) = rom() else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let layout = RomLayout::detect(&rom).expect("vanilla");
+        let source =
+            Level::load(&rom, &layout, LevelId::new(0x105).expect("valid")).expect("loads");
+        let mut copy = source.clone();
+        copy.id = LevelId::new(0x1FF).expect("valid");
+        save_level(&mut rom, &layout, &copy, &SaveOptions::default()).expect("saves");
+
+        // Background → objects (an empty stream would be shared with an unused
+        // vanilla level, so give it one object): a fresh block in expanded space.
+        let mut objects = copy.clone();
+        objects.layer2 = crate::level::Layer2::Objects {
+            header_copy: [0; 5],
+            stream: crate::level::ObjectStream::default(),
+        };
+        let spec = crate::level::ObjectSpec { number: 0x3F, third: 0x53, pos: TilePos::new(7, 9) };
+        objects.insert_object(crate::level::Layer::Two, usize::MAX, spec).expect("fits");
+        let first =
+            save_level(&mut rom, &layout, &objects, &SaveOptions::default()).expect("saves");
+        let Placement::Relocated { tag, .. } = first.layer2 else {
+            panic!("expected relocation, got {:?}", first.layer2);
+        };
+        assert!(first.freed.is_empty(), "105's vanilla background is untagged and shared");
+
+        // Objects → the original background: shares 105's tilemap, frees the block.
+        let second = save_level(&mut rom, &layout, &copy, &SaveOptions::default()).expect("saves");
+        assert_eq!(second.layer2, Placement::Shared(source.addresses.layer2));
+        assert_eq!(second.freed, vec![tag]);
+        let reloaded = Level::load(&rom, &layout, copy.id).expect("reloads");
+        assert_eq!(reloaded.layer2_bytes(), copy.layer2_bytes());
         assert!(rom.checksum_matches());
     }
 

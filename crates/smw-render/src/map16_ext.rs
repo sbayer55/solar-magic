@@ -53,7 +53,11 @@ impl<'a> FgPageResolver<'a> {
     /// A resolver for `rom`, or `None` for a vanilla layout.
     #[must_use]
     pub fn new(rom: &'a Rom, layout: &RomLayout) -> Option<Self> {
-        let getter = layout.lm.as_ref()?.fg_map16_getter;
+        let lm = layout.lm.as_ref()?;
+        if !lm.features.contains(smw_data::LmFeatures::FG_MAP16_GETTER) {
+            return None;
+        }
+        let getter = lm.fg_map16_getter;
         let mut cpu = Cpu::new();
         cpu.brk_is_fatal = true;
         Some(Self {

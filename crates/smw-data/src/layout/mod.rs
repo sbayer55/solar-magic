@@ -5,14 +5,21 @@
 //! but adds its own, described by [`LunarMagicTables`]; [`RomLayout::detect`]
 //! picks the layout.
 
+mod known;
 mod lunar_magic;
+mod markers;
 mod vanilla;
 
 use core::fmt;
 
 use snes_rom::{Rom, SnesAddr};
 
-pub use lunar_magic::{LM_25X, LunarMagicTables};
+pub use known::{KnownRange, label_address};
+pub use lunar_magic::{
+    HijackScan, LM_25X, Layer2FlagsFormat, LmFeatures, LunarMagicTables, V3X_LEVEL_HEIGHT,
+    V3X_SCREEN_TABLE_SEEDS, WramSeed, scan_hijacks,
+};
+pub use markers::{LmMarker, MARKER_LEN, MarkerPlacement, scan_marker_bytes, scan_markers};
 pub use vanilla::{VANILLA, VANILLA_FREE_RANGES};
 
 use crate::LayoutError;
@@ -421,6 +428,7 @@ mod tests {
         assert!(matches!(layout.kind, LayoutKind::LunarMagic { major: 2, .. }), "{}", layout.kind);
         assert!(layout.lm.is_some());
         assert_eq!(layout.sprite_banks, layout.lm.map(|lm| lm.sprite_banks));
+        assert_eq!(layout.object_format(), crate::level::ObjectFormat::LunarMagic);
     }
 
     #[test]

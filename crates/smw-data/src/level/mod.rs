@@ -181,7 +181,7 @@ impl Level {
             let addr = SnesAddr::from_parts(LAYER2_BACKGROUND_REAL_BANK, layer2_raw.offset());
             let page = u8::from(layer2_raw.offset() >= layer2::SECOND_PAGE_OFFSET);
             (addr, load_background(rom, id, addr, BackgroundShape::EightBit { page })?)
-        } else if flags.relocated_tilemap() {
+        } else if lm.is_some_and(|info| info.has_tilemap()) {
             let shape = if flags.sixteen_bit() {
                 BackgroundShape::SixteenBit { page_set: flags.page() }
             } else {
@@ -298,15 +298,30 @@ fn offset(base: SnesAddr, by: u32) -> Result<SnesAddr, RomError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Layer2, Level, ObjectFormat, ObjectStream, PrimaryHeader};
+    use super::{
+        LAYER2_BACKGROUND_BANK, LAYER2_BACKGROUND_REAL_BANK, Layer2, Level, ObjectFormat,
+        ObjectStream, PrimaryHeader, layer2,
+    };
     use crate::{LevelId, RomLayout};
 
     /// Every Lunar Magic-tagged block re-serializes to exactly the bytes the
     /// RATS tag protects, which pins every object length rule.
     #[test]
     fn lm_rom_rats_oracle() {
-        let Some(path) = std::env::var_os("LM_ROM") else {
-            eprintln!("LM_ROM not set; skipping Lunar Magic ROM test");
+        rats_oracle("LM_ROM", 30, 5);
+    }
+
+    #[test]
+    fn lm3_rom_rats_oracle() {
+        rats_oracle("LM3_ROM", 2, 0);
+    }
+
+    /// Every level of the Lunar Magic ROM named by `var` re-serializes to
+    /// its stored bytes, and every RATS-tagged part fills its tag exactly.
+    #[allow(clippy::arithmetic_side_effects, reason = "test bookkeeping")]
+    fn rats_oracle(var: &str, min_tagged: usize, min_sixteen_bit: usize) {
+        let Some(path) = std::env::var_os(var) else {
+            eprintln!("{var} not set; skipping Lunar Magic ROM test");
             return;
         };
         let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
@@ -336,8 +351,50 @@ mod tests {
                 sixteen_bit += 1;
             }
         }
-        assert!(tagged >= 30, "expected many RATS-tagged blocks, got {tagged}");
-        assert!(sixteen_bit >= 5, "expected 16-bit backgrounds, got {sixteen_bit}");
+        assert!(tagged >= min_tagged, "expected at least {min_tagged} tagged blocks, got {tagged}");
+        assert!(
+            sixteen_bit >= min_sixteen_bit,
+            "expected at least {min_sixteen_bit} 16-bit backgrounds, got {sixteen_bit}"
+        );
+    }
+
+    /// In a 3.x ROM the flags byte of every untouched vanilla level mirrors
+    /// the shape of its layer 2 pointer: bit 3 for backgrounds (now stored
+    /// with bank `$0C`), bit 4 for the ones on the second page.
+    #[test]
+    fn lm3_flags_match_pointer_shape() {
+        let Some(path) = std::env::var_os("LM3_ROM") else {
+            eprintln!("LM3_ROM not set; skipping Lunar Magic ROM test");
+            return;
+        };
+        let rom = snes_rom::Rom::load(std::path::Path::new(&path)).expect("loads");
+        let layout = RomLayout::detect(&rom).expect("lunar magic");
+        let mut backgrounds = 0;
+        for id in LevelId::all() {
+            let level = Level::load(&rom, &layout, id).expect("loads");
+            let info = level.lm.expect("lunar magic info");
+            let raw = level.addresses.layer2_raw;
+            assert_ne!(raw.bank(), LAYER2_BACKGROUND_BANK, "level {id}: $FF marker survives");
+            if info.flags.relocated_tilemap() {
+                continue;
+            }
+            let is_bg = raw.bank() == LAYER2_BACKGROUND_REAL_BANK;
+            assert_eq!(
+                info.flags.vanilla_bank_tilemap(),
+                is_bg,
+                "level {id} flags {:#04X}",
+                info.flags.0
+            );
+            if is_bg {
+                backgrounds += 1;
+                let page1 = raw.offset() >= layer2::SECOND_PAGE_OFFSET;
+                assert_eq!(info.flags.page(), u8::from(page1), "level {id}");
+                assert!(matches!(level.layer2, Layer2::Background { .. }), "level {id}");
+            } else {
+                assert!(matches!(level.layer2, Layer2::Objects { .. }), "level {id}");
+            }
+        }
+        assert!(backgrounds > 100, "{backgrounds} background levels");
     }
 
     /// Vanilla object streams mean the same thing under the Lunar Magic rules.

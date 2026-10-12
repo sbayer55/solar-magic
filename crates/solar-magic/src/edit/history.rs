@@ -1,15 +1,34 @@
-//! Memento-based undo/redo: every entry stores the level before its command.
+//! Memento-based undo/redo: every entry stores the level (and the secondary
+//! exits edited with it) before its command.
 
 use smw_data::level::{EditError, Level};
 
 use super::EditCommand;
+use super::commands::SecondaryExits;
 
 #[derive(Debug)]
 struct Entry {
     command: EditCommand,
-    /// The level to restore when this entry is undone (or redone).
-    snapshot: Level,
+    /// The state to restore when this entry is undone (or redone).
+    snapshot: Snapshot,
     group: Option<u64>,
+}
+
+/// Everything a command may change.
+#[derive(Debug)]
+struct Snapshot {
+    level: Level,
+    exits: SecondaryExits,
+}
+
+impl Snapshot {
+    /// Swaps the live state with this snapshot, returning the state that was live.
+    fn swap_into(self, level: &mut Level, exits: &mut SecondaryExits) -> Self {
+        Self {
+            level: core::mem::replace(level, self.level),
+            exits: core::mem::replace(exits, self.exits),
+        }
+    }
 }
 
 /// Undo and redo stacks plus the saved-state marker.
@@ -22,16 +41,17 @@ pub(crate) struct History {
 }
 
 impl History {
-    /// Applies `command` to `level` and records it. Commands in the same
-    /// `group` as the previous entry are merged into it.
+    /// Applies `command` to `level` and `exits` and records it. Commands in
+    /// the same `group` as the previous entry are merged into it.
     pub(crate) fn apply(
         &mut self,
         level: &mut Level,
+        exits: &mut SecondaryExits,
         command: EditCommand,
         group: Option<u64>,
     ) -> Result<(), EditError> {
-        let snapshot = level.clone();
-        command.apply(level)?;
+        let snapshot = Snapshot { level: level.clone(), exits: exits.clone() };
+        command.apply(level, exits)?;
         self.redo.clear();
         if self.undo.len() < self.saved_depth {
             self.lost_saved_point = true;
@@ -48,18 +68,26 @@ impl History {
     }
 
     /// Reverts the last command. Returns its label if there was one.
-    pub(crate) fn undo(&mut self, level: &mut Level) -> Option<&'static str> {
+    pub(crate) fn undo(
+        &mut self,
+        level: &mut Level,
+        exits: &mut SecondaryExits,
+    ) -> Option<&'static str> {
         let entry = self.undo.pop()?;
-        let current = core::mem::replace(level, entry.snapshot);
+        let current = entry.snapshot.swap_into(level, exits);
         let label = entry.command.label();
         self.redo.push(Entry { command: entry.command, snapshot: current, group: None });
         Some(label)
     }
 
     /// Re-applies the last undone command.
-    pub(crate) fn redo(&mut self, level: &mut Level) -> Option<&'static str> {
+    pub(crate) fn redo(
+        &mut self,
+        level: &mut Level,
+        exits: &mut SecondaryExits,
+    ) -> Option<&'static str> {
         let entry = self.redo.pop()?;
-        let current = core::mem::replace(level, entry.snapshot);
+        let current = entry.snapshot.swap_into(level, exits);
         let label = entry.command.label();
         self.undo.push(Entry { command: entry.command, snapshot: current, group: None });
         Some(label)
@@ -94,11 +122,12 @@ mod tests {
     use smw_data::LevelId;
     use smw_data::level::fields::primary;
     use smw_data::level::{
-        Layer2, Level, LevelAddresses, ObjectStream, PrimaryHeader, SecondaryHeader, SpriteList,
+        ExitId, Layer2, Level, LevelAddresses, ObjectStream, PrimaryHeader, SecondaryExit,
+        SecondaryHeader, SpriteList,
     };
     use snes_rom::SnesAddr;
 
-    use super::{EditCommand, History};
+    use super::{EditCommand, History, SecondaryExits};
 
     fn level() -> Level {
         let addr = SnesAddr::lit(0x06_8000);
@@ -125,26 +154,53 @@ mod tests {
     fn undo_restores_bytes_and_tracks_dirtiness() {
         let mut lv = level();
         let original = lv.layer1_bytes();
+        let mut ex = SecondaryExits::new();
         let mut h = History::default();
         assert!(!h.is_dirty());
-        h.apply(&mut lv, EditCommand::SetHeaderField { field: primary::MUSIC, value: 3 }, None)
-            .unwrap();
+        h.apply(
+            &mut lv,
+            &mut ex,
+            EditCommand::SetHeaderField { field: primary::MUSIC, value: 3 },
+            None,
+        )
+        .unwrap();
         assert_eq!(lv.header.music(), 3);
         assert!(h.is_dirty());
         h.mark_saved();
         assert!(!h.is_dirty());
-        assert_eq!(h.undo(&mut lv), Some("edit header"));
+        assert_eq!(h.undo(&mut lv, &mut ex), Some("edit header"));
         assert_eq!(lv.layer1_bytes(), original);
         assert!(h.is_dirty());
-        assert_eq!(h.redo(&mut lv), Some("edit header"));
+        assert_eq!(h.redo(&mut lv, &mut ex), Some("edit header"));
         assert_eq!(lv.header.music(), 3);
         assert!(!h.is_dirty());
-        assert_eq!(h.undo(&mut lv), Some("edit header"));
+        assert_eq!(h.undo(&mut lv, &mut ex), Some("edit header"));
         // A new edit after undoing below the saved point can never be "saved".
-        h.apply(&mut lv, EditCommand::SetHeaderField { field: primary::MUSIC, value: 1 }, None)
-            .unwrap();
+        h.apply(
+            &mut lv,
+            &mut ex,
+            EditCommand::SetHeaderField { field: primary::MUSIC, value: 1 },
+            None,
+        )
+        .unwrap();
         assert!(h.is_dirty());
-        assert_eq!(h.redo(&mut lv), None);
+        assert_eq!(h.redo(&mut lv, &mut ex), None);
+    }
+
+    #[test]
+    fn secondary_exits_undo_with_the_level() {
+        let mut lv = level();
+        let mut ex = SecondaryExits::new();
+        let mut h = History::default();
+        let id = ExitId::new(0x12).unwrap();
+        let exit = SecondaryExit { raw: [0x05, 0, 0, 0] };
+        h.apply(&mut lv, &mut ex, EditCommand::SetSecondaryExit { id, exit }, None).unwrap();
+        assert_eq!(ex.get(&id), Some(&exit));
+        assert!(h.is_dirty());
+        assert_eq!(h.undo(&mut lv, &mut ex), Some("edit secondary exit"));
+        assert!(ex.is_empty());
+        assert_eq!(h.redo(&mut lv, &mut ex), Some("edit secondary exit"));
+        assert_eq!(ex.get(&id), Some(&exit));
     }
 
     #[test]
@@ -166,14 +222,15 @@ mod tests {
             indices: vec![0],
             delta: d,
         };
-        h.apply(&mut lv, step((1, 0)), Some(7)).unwrap();
-        h.apply(&mut lv, step((1, 1)), Some(7)).unwrap();
-        h.apply(&mut lv, step((0, 1)), Some(8)).unwrap();
+        let mut ex = SecondaryExits::new();
+        h.apply(&mut lv, &mut ex, step((1, 0)), Some(7)).unwrap();
+        h.apply(&mut lv, &mut ex, step((1, 1)), Some(7)).unwrap();
+        h.apply(&mut lv, &mut ex, step((0, 1)), Some(8)).unwrap();
         assert_eq!(lv.layer1.objects[0].position(false), Some(smw_data::level::TilePos::new(4, 4)));
         assert_eq!(h.undo.len(), 2, "the first two steps merged");
-        h.undo(&mut lv);
+        h.undo(&mut lv, &mut ex);
         assert_eq!(lv.layer1.objects[0].position(false), Some(smw_data::level::TilePos::new(4, 3)));
-        h.undo(&mut lv);
+        h.undo(&mut lv, &mut ex);
         assert_eq!(lv.layer1.objects[0].position(false), Some(smw_data::level::TilePos::new(2, 2)));
     }
 }

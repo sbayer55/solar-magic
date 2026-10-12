@@ -6,6 +6,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod bg_rle;
+mod diff_rom;
 mod dump_exits;
 mod dump_gfx;
 mod dump_level;
@@ -21,9 +22,11 @@ mod ips_apply;
 mod ips_create;
 mod ips_info;
 mod level_io;
+mod mwl;
 mod play;
 mod png;
 mod render;
+mod trace;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -115,6 +118,109 @@ enum Command {
         /// Level number in hex (000-1FF).
         #[arg(value_parser = parse_hex_u16)]
         level: u16,
+    },
+    /// Compare two ROM images: changed byte ranges labelled by the tables
+    /// they fall in, RATS tags added or removed, and Lunar Magic markers.
+    DiffRom {
+        /// The older image.
+        a: PathBuf,
+        /// The newer image.
+        b: PathBuf,
+        /// Merge changed ranges fewer than this many bytes apart.
+        #[arg(long, default_value_t = 4)]
+        gap: usize,
+        /// Also list every Lunar Magic marker of both images.
+        #[arg(long)]
+        markers: bool,
+        /// Print at most this many changed ranges.
+        #[arg(long, default_value_t = 200)]
+        limit: usize,
+    },
+    /// Run a ROM routine (or a level load) in the emulator and report every
+    /// ROM range it read, WRAM range it wrote or read uninitialised, and
+    /// hardware register it touched.
+    Trace {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// `level:<hex>` to run the level loader on that level, or a SNES
+        /// address such as `04:DC57` to `JSL` into a routine.
+        target: String,
+        /// WRAM bytes to seed before the call, as `addr=value` in hex (one,
+        /// two or three value bytes by digit count), e.g. `0E=105`.
+        #[arg(long = "ram")]
+        ram: Vec<String>,
+        /// Instruction budget.
+        #[arg(long, default_value_t = 10_000_000)]
+        steps: u64,
+        /// Merge ranges that are fewer than this many bytes apart.
+        #[arg(long, default_value_t = 8)]
+        gap: u32,
+        /// Start with 8-bit A (default is 16-bit A and X in native mode).
+        #[arg(long)]
+        m8: bool,
+        /// Start with 8-bit X/Y.
+        #[arg(long)]
+        x8: bool,
+        /// Only print ROM ranges that no known table accounts for.
+        #[arg(long)]
+        unknown_only: bool,
+        /// After the run, hex-dump WRAM at `addr:len` (hex), e.g. `0BF6:100`.
+        #[arg(long = "dump")]
+        dump: Vec<String>,
+        /// Routine mode: jump to the target (no `JSL`) and stop when the
+        /// program counter reaches this address instead of on return.
+        #[arg(long)]
+        stop: Option<String>,
+        /// Before the run, copy ROM bytes into WRAM: `rom:ram:len` in hex,
+        /// e.g. `00BAD8:0BF6:60` (what a patched init would have done).
+        #[arg(long = "copy")]
+        copy: Vec<String>,
+    },
+    /// Write a level as a Lunar Magic `.mwl` file.
+    MwlExport {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Level number in hex (000-1FF).
+        #[arg(value_parser = parse_hex_u16)]
+        level: u16,
+        /// Output `.mwl` path.
+        out: PathBuf,
+    },
+    /// Import a `.mwl` file into a level slot and write the ROM to `out`.
+    MwlImport {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Output ROM path.
+        out: PathBuf,
+        /// The `.mwl` file.
+        file: PathBuf,
+        /// Level slot in hex; default is the level number recorded in the file.
+        #[arg(long, value_parser = parse_hex_u16)]
+        level: Option<u16>,
+    },
+    /// Print what a `.mwl` file contains.
+    MwlInfo {
+        /// The `.mwl` file.
+        file: PathBuf,
+    },
+    /// Export every level as `<prefix><level>.mwl` into a directory.
+    ExportAll {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Output directory (created if missing).
+        dir: PathBuf,
+        /// File name prefix.
+        #[arg(long, default_value = "level ")]
+        prefix: String,
+    },
+    /// Import every `.mwl` in a directory into the levels they name.
+    ImportAll {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Output ROM path.
+        out: PathBuf,
+        /// Directory of `.mwl` files.
+        dir: PathBuf,
     },
     /// Print secondary exits (all non-blank ones, or a single one).
     DumpExits {
@@ -331,6 +437,19 @@ fn main() -> ExitCode {
         Command::RelocateLevel { rom, out, level } => level_io::relocate(&rom, &out, level),
         Command::CopyLevel { rom, out, src, dst } => level_io::copy(&rom, &out, src, dst),
         Command::DumpExits { rom, exit } => dump_exits::run(&rom, exit),
+        Command::MwlExport { rom, level, out } => mwl::export(&rom, level, &out),
+        Command::MwlImport { rom, out, file, level } => mwl::import(&rom, &out, &file, level),
+        Command::MwlInfo { file } => mwl::info(&file),
+        Command::ExportAll { rom, dir, prefix } => mwl::export_all(&rom, &dir, &prefix),
+        Command::ImportAll { rom, out, dir } => mwl::import_all(&rom, &out, &dir),
+        Command::DiffRom { a, b, gap, markers, limit } => {
+            diff_rom::run(&a, &b, &diff_rom::Options { gap, markers, limit })
+        }
+        Command::Trace { rom, target, ram, steps, gap, m8, x8, unknown_only, dump, stop, copy } => {
+            let opts =
+                trace::Options { target, ram, steps, gap, m8, x8, unknown_only, dump, stop, copy };
+            trace::run(&rom, &opts)
+        }
         Command::Render { rom, level, out, layers, scale, sprites, owners } => {
             render::run(&rom, &out, render::Options { level, layers, scale, sprites, owners })
         }

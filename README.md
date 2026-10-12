@@ -12,7 +12,7 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | Milestone | State |
 |---|---|
 | M0 ROM container, address mapping, header, RATS, layout seam, CI | done |
-| M8 Lunar Magic 2.5x ROMs: levels, backgrounds, palettes, ExGFX, Map16 pages | done |
+| M8 Lunar Magic 2.5x (and, since LM1, 3.71) ROMs: levels, backgrounds, palettes, ExGFX, Map16 pages | done |
 | M1 LC_LZ2, GFX and palette decoding (`solar dump-gfx`) | done |
 | M2 Map16 (`solar dump-map16`) | done |
 | M3 level headers, objects, sprites, layer 2 parse + 512-level round trip (`solar dump-level`) | done |
@@ -28,6 +28,10 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | E7 LC_LZ2 compressor (`solar gfx-check`) | done |
 | G1–G4 editor: select, rubber band, drag, insert, delete, cut/copy/paste, undo/redo, header and exit editing, Save / Save As with dirty tracking | done |
 | G5 direct Map16 paint tool | pending (needs Lunar Magic's object format) |
+| Prep for Lunar Magic compatibility: `solar trace` (ROM/WRAM access tracing of any routine or level load), secondary exits in the undo stack, paste at the cursor, saved-block leak fixes | done |
+| LM0 reverse-engineering tooling: `solar diff-rom` (changed ranges labelled by table, RATS tag changes, Lunar Magic markers), labelled `trace` output, `RomLayout::known_ranges`, marker scanning in `info` | done |
+| LM1 version-agnostic Lunar Magic detection: per-feature hijack scan (`LmFeatures`), 2.5x and 3.x layer 2 flag formats; LM 3.71 ROMs open and render identically to vanilla | done |
+| LM9 `.mwl` level files: `solar mwl-export` / `mwl-import` / `mwl-info` / `export-all` / `import-all`; exports equal Lunar Magic 3.71's byte for byte | done |
 | Lunar Magic ROM compatibility, rendering fidelity (sprites, priority, layer 3), overworld | planned, see `docs/ARCHITECTURE.md` |
 | Tools: IPS patcher (`solar ips-apply` / `ips-create` / `ips-info`, GUI Tools → IPS Patcher) | done: Lunar IPS parity (RLE, expand/truncate, apply log, copier-header add/strip) |
 | In-house SNES emulator (`snes-core`, `snes-ppu`, `spc700`, `snes-apu`, `snes-sa1`, `smw-play`; `solar emu-boot`, `solar play 105 --out frame.png`) | E0–E9 done: cycle-exact 65c816 and SPC700, machine core, S-SMP with boot-ROM handshake and S-DSP sound, PPU renderer (modes 0-7, hi-res, interlace, offset-per-tile, sprites, windows, colour math; 56 of krom's 73 test ROMs match their screenshots), SA-1 coprocessor (unit-tested; no SA-1 ROM locally), launch straight into any level with unsaved edits (main/midway/secondary-exit entrances, play from any tile). Tools → Play Level (Ctrl+T) runs the edited level in the editor with keyboard or gamepad (`--features gamepad`) input and sound, save states, rewind and `.srm` saves; the Debug panel has registers, disassembly, breakpoints, watches, memory and a trace. Next: verify SA-1/ExLoROM against a real Lunar Magic ROM (`docs/emulation/`) |
@@ -43,6 +47,10 @@ cargo solar dump-gfx "roms/Super Mario World (USA).sfc" out/gfx --row 2
 cargo solar dump-map16 "roms/Super Mario World (USA).sfc" out/map16.png --tileset 0
 cargo solar dump-level "roms/Super Mario World (USA).sfc" 105
 cargo solar render "roms/Super Mario World (USA).sfc" 105 out/level105.png --sprites
+cargo solar trace "roms/Super Mario World (USA).sfc" level:105      # what the loader reads and writes
+cargo solar diff-rom before.sfc after.sfc --markers                 # what Lunar Magic changed, by table
+cargo solar mwl-export "roms/Super Mario World (USA).sfc" 105 out/105.mwl
+cargo solar mwl-import "roms/Super Mario World (USA).sfc" out/hack.sfc out/105.mwl --level 106
 cargo solar relocate-level "roms/Super Mario World (USA).sfc" out/edited.sfc 105
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # the editor
 cargo solar ips-info hack.ips

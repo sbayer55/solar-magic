@@ -1,4 +1,4 @@
-//! Launches real levels when `SMW_ROM` / `LM_ROM` are set.
+//! Launches real levels when `SMW_ROM` / `LM_ROM` / `LM3_ROM` are set.
 
 use smw_data::level::Level;
 use smw_data::{LevelId, RomLayout};
@@ -95,6 +95,16 @@ fn edited_entrance_screen_is_honoured() {
 #[test]
 fn lunar_magic_rom_launches() {
     let Some((rom, layout)) = rom_from("LM_ROM") else { return };
+    let console = launch(&rom, &layout, 0x105, MarioState::default());
+    assert_eq!(game_mode(&console, &layout), 0x14);
+}
+
+/// Lunar Magic 3.71 keeps vanilla's level-entry routine, so the layout
+/// must hand the launcher the vanilla hooks.
+#[test]
+fn lunar_magic_3_rom_launches_with_vanilla_hooks() {
+    let Some((rom, layout)) = rom_from("LM3_ROM") else { return };
+    assert_eq!(layout.launch.level_select_pc, smw_data::layout::VANILLA.launch.level_select_pc);
     let console = launch(&rom, &layout, 0x105, MarioState::default());
     assert_eq!(game_mode(&console, &layout), 0x14);
 }

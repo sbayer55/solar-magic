@@ -21,7 +21,13 @@ decides the level number and loads the pointers:
 | sublevel path | `LDX PlayerXPosNext+1; LDA ExitTableLow,X; … LDA UseSecondaryExit; BEQ` else secondary exit tables `$05:F800/FA00/FC00/FE00` indexed by `$0E/$0F` | screen exits and secondary exits |
 
 Fingerprint at `$05:D8B7`: `C2 30 A5 0E 0A 18 65 0E A8`. Lunar Magic 2.5x
-ROMs keep this code (checked on Quickie World 2).
+rewrites the routine (`BRA` over three `NOP`s, then `REP #$30 / LDA $0E /
+STA $010B / ASL / CLC / ADC $0E / TAY` at `$05:D8BC`; checked on Quickie
+World 2, LM 2.53), so its hooks break at `$05:D8BC`. Lunar Magic 3.71
+leaves the vanilla bytes in place (checked on `roms/lm371/a-unchanged.sfc`,
+2026-10-12), so `RomLayout` picks the hooks per ROM by testing for the
+2.5x bytes (`layout/lunar_magic.rs::launch_hooks`); the launcher verifies
+the chosen fingerprint again before relying on the breakpoint.
 
 ## RAM used (bank `$7E`)
 

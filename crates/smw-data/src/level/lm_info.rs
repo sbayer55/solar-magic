@@ -3,7 +3,7 @@
 
 use snes_rom::{Rom, RomError, SnesAddr};
 
-use crate::{LevelId, RomLayout};
+use crate::{Layer2FlagsFormat, LevelId, RomLayout};
 
 /// Pointer value meaning "no custom palette for this level".
 const NO_PALETTE: u32 = 0;
@@ -22,6 +22,23 @@ impl LmLevelFlags {
     #[must_use]
     pub const fn relocated_tilemap(self) -> bool {
         self.0 & 0x02 != 0
+    }
+
+    /// Bit 3 (3.x only): a vanilla background whose pointer carries the
+    /// real bank `$0C` instead of the `$FF` marker.
+    #[must_use]
+    pub const fn vanilla_bank_tilemap(self) -> bool {
+        self.0 & 0x08 != 0
+    }
+
+    /// Whether the layer 2 pointer names a background tilemap (of either
+    /// kind) under `format`.
+    #[must_use]
+    pub const fn tilemap(self, format: Layer2FlagsFormat) -> bool {
+        match format {
+            Layer2FlagsFormat::V25x => self.relocated_tilemap(),
+            Layer2FlagsFormat::V3x => self.relocated_tilemap() || self.vanilla_bank_tilemap(),
+        }
     }
 
     /// Bit 2: that tilemap decodes to 0x800 bytes of 16-bit tile numbers
@@ -43,6 +60,8 @@ impl LmLevelFlags {
 pub struct LmLevelInfo {
     /// Layer 2 flags.
     pub flags: LmLevelFlags,
+    /// How `flags` is laid out (from the ROM's hook variant).
+    pub format: Layer2FlagsFormat,
     /// Where the level's custom palette block lives, if it has one.
     pub custom_palette: Option<SnesAddr>,
     /// Secondary header bytes 4, 5 and 6, as stored.
@@ -50,6 +69,13 @@ pub struct LmLevelInfo {
 }
 
 impl LmLevelInfo {
+    /// Whether the layer 2 pointer names a background tilemap rather than
+    /// an object stream (`flags` interpreted under `format`).
+    #[must_use]
+    pub const fn has_tilemap(&self) -> bool {
+        self.flags.tilemap(self.format)
+    }
+
     /// Reads the level's entries from Lunar Magic's tables; `None` for a
     /// vanilla layout.
     ///
@@ -71,7 +97,7 @@ impl LmLevelInfo {
         for (slot, table) in secondary_ext.iter_mut().zip(lm.secondary_header_ext.iter()) {
             *slot = rom.read_u8(offset(*table, index)?)?;
         }
-        Ok(Some(Self { flags, custom_palette, secondary_ext }))
+        Ok(Some(Self { flags, format: lm.layer2_flags_format, custom_palette, secondary_ext }))
     }
 }
 
@@ -82,6 +108,7 @@ fn offset(base: SnesAddr, by: u32) -> Result<SnesAddr, RomError> {
 #[cfg(test)]
 mod tests {
     use super::LmLevelFlags;
+    use crate::Layer2FlagsFormat;
 
     #[test]
     fn flag_bits() {
@@ -94,5 +121,12 @@ mod tests {
         assert!(!g.sixteen_bit());
         assert_eq!(g.page(), 1);
         assert!(!LmLevelFlags(0).relocated_tilemap());
+        let v3 = LmLevelFlags(0x18);
+        assert!(v3.vanilla_bank_tilemap());
+        assert!(!v3.relocated_tilemap());
+        assert_eq!(v3.page(), 1);
+        assert!(v3.tilemap(Layer2FlagsFormat::V3x));
+        assert!(!v3.tilemap(Layer2FlagsFormat::V25x));
+        assert!(f.tilemap(Layer2FlagsFormat::V25x));
     }
 }
