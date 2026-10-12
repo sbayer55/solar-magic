@@ -43,9 +43,11 @@ pub(crate) enum Command {
 /// A finished frame and where the machine is.
 #[derive(Debug, Clone)]
 pub(crate) struct FrameEvent {
-    /// Tightly packed RGBA, 256 wide.
+    /// Tightly packed RGBA, `width × height`.
     pub(crate) rgba: Arc<[u8]>,
-    /// Rows.
+    /// Columns (256, or 512 in hi-res).
+    pub(crate) width: usize,
+    /// Rows (224/239, doubled when interlaced).
     pub(crate) height: usize,
     /// Frame counter.
     pub(crate) frame: u64,
@@ -124,7 +126,7 @@ impl PlaySession {
             newest = Some(frame);
         }
         if let Some(frame) = newest {
-            let size = [snes_core::FRAME_WIDTH, frame.height];
+            let size = [frame.width, frame.height];
             let image = egui::ColorImage::from_rgba_unmultiplied(size, &frame.rgba);
             match self.texture.as_mut() {
                 Some(texture) if texture.size() == size => {
@@ -278,7 +280,8 @@ impl Worker {
             let frame = console.frame();
             let event = FrameEvent {
                 rgba: Arc::from(frame.to_rgba()),
-                height: frame.height,
+                width: frame.width(),
+                height: frame.height(),
                 frame: console.bus().clock.frame,
                 phase: launcher.phase(),
                 game_mode: smw_play::game_mode(&console, &self.layout),
@@ -329,7 +332,7 @@ mod tests {
         }
         let frame = playing.expect("the level started within a minute");
         assert_eq!(frame.game_mode, 0x14);
-        assert_eq!(frame.height, 224);
+        assert_eq!((frame.width, frame.height), (256, 224));
         assert!(frame.rgba.chunks(4).any(|p| p != [0, 0, 0, 0xFF]));
         session.send(Command::Pause);
     }

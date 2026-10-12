@@ -68,7 +68,7 @@ fn title_frame_renders() {
     let Some(rom) = smw() else { return };
     let console = run_frames(&rom, 600);
     let frame = console.frame();
-    assert_eq!(frame.height, 224);
+    assert_eq!((frame.width(), frame.height()), (256, 224));
     let rgba = frame.to_rgba();
     let mut colors: Vec<&[u8]> = rgba.chunks(4).collect();
     colors.sort_unstable();

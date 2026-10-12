@@ -15,7 +15,7 @@ mod render;
 mod vram;
 
 pub use cgram::Cgram;
-pub use frame::{FRAME_HEIGHT, FRAME_WIDTH, Frame};
+pub use frame::{FRAME_HEIGHT, FRAME_WIDTH, Frame, MAX_FRAME_HEIGHT, MAX_FRAME_WIDTH};
 pub use oam::Oam;
 pub use regs::{BgRegs, Mode7Regs, Regs};
 pub use vram::Vram;
@@ -253,12 +253,13 @@ impl Ppu {
         }
     }
 
-    /// Start of a frame.
+    /// Start of a frame: the interlace setting is latched for the whole
+    /// frame and the previous picture's shape is published.
     pub const fn frame_start(&mut self, field: bool) {
         self.status.field = field;
         self.status.range_over = false;
         self.status.time_over = false;
-        self.render.restart_frame();
+        self.render.start_frame(field, self.regs.interlace);
     }
 }
 

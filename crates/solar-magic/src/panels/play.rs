@@ -19,10 +19,14 @@ impl Viewer<'_> {
             ui.spinner();
             return;
         };
+        // Hi-res and interlaced frames show at the lo-res size.
         let zoom = f32::from(play.zoom.max(1));
+        let [width, height] = texture.size();
+        let x_shift = u8::from(width > snes_core::FRAME_WIDTH);
+        let y_shift = u8::from(height > snes_core::FRAME_HEIGHT);
         let size = egui::vec2(
-            super::to_f32(u32::try_from(texture.size()[0]).unwrap_or(256)) * zoom,
-            super::to_f32(u32::try_from(texture.size()[1]).unwrap_or(224)) * zoom,
+            super::to_f32(u32::try_from(width >> x_shift).unwrap_or(256)) * zoom,
+            super::to_f32(u32::try_from(height >> y_shift).unwrap_or(224)) * zoom,
         );
         let response =
             ui.add(egui::Image::new(texture).fit_to_exact_size(size).sense(Sense::click()));

@@ -1,6 +1,8 @@
 //! Sprite evaluation and rendering for one line: up to 32 sprites and 34
 //! 8-pixel tiles, highest-priority sprites dropped first when the tile
-//! budget runs out (bsnes `Object::render`).
+//! budget runs out (bsnes `Object::render`). With `SETINI` bit 1 sprites
+//! are half height and each field shows alternate rows (ares
+//! `Object::fetch`).
 
 use super::pixel::Px;
 use crate::oam::Oam;
@@ -50,7 +52,8 @@ fn sprite(oam: &Oam, regs: &Regs, n: u8, v: u16) -> Option<Sprite> {
         .unwrap_or((8, 8));
     // Sprites appear one line below their Y: line v shows sprite row v-1-y.
     let row = crate::bits::lo(v.wrapping_sub(1).wrapping_sub(u16::from(y)) & 0xFF);
-    if row >= height {
+    let visible_height = if regs.obj_interlace { height >> 1 } else { height };
+    if row >= visible_height {
         return None;
     }
     let x = if x_high { i16::from(x_low).wrapping_sub(256) } else { i16::from(x_low) };
@@ -78,14 +81,42 @@ pub(crate) struct ObjFlags {
     pub time_over: bool,
 }
 
-/// Renders the sprites visible on line `v` into `out`.
-pub(crate) fn render_line(
-    vram: &Vram,
-    oam: &Oam,
-    regs: &Regs,
-    v: u16,
-    out: &mut [Px; 256],
-) -> ObjFlags {
+/// What one sprite line needs.
+#[derive(Clone, Copy)]
+pub(crate) struct ObjLine<'a> {
+    pub vram: &'a Vram,
+    pub oam: &'a Oam,
+    pub regs: &'a Regs,
+    /// Scanline being rendered (1-based).
+    pub v: u16,
+    /// Interlace field (only matters with `SETINI` bit 1).
+    pub field: bool,
+}
+
+/// The row of the sprite's character data shown on this line: doubled and
+/// offset by the field in OBJ interlace, flipped per 16/32-pixel half for
+/// the tall sprite sizes (ares `Object::fetch`).
+fn tile_row(s: &Sprite, interlace: bool, field: bool) -> u8 {
+    let mut y = if interlace { s.row << 1 } else { s.row };
+    if s.vflip {
+        y = if s.width == s.height {
+            s.height.wrapping_sub(1).wrapping_sub(y)
+        } else if y < s.width {
+            s.width.wrapping_sub(1).wrapping_sub(y)
+        } else {
+            s.width.wrapping_add(s.width.wrapping_sub(1)).wrapping_sub(y.wrapping_sub(s.width))
+        };
+    }
+    if interlace {
+        let f = u8::from(field);
+        y = if s.vflip { y.wrapping_sub(f) } else { y.wrapping_add(f) };
+    }
+    y
+}
+
+/// Renders the sprites visible on the line into `out`.
+pub(crate) fn render_line(line: &ObjLine<'_>, out: &mut [Px; 256]) -> ObjFlags {
+    let ObjLine { vram, oam, regs, v, field } = *line;
     out.fill(Px::TRANSPARENT);
     let mut flags = ObjFlags::default();
     let mut items: Vec<Sprite> = Vec::with_capacity(32);
@@ -103,7 +134,7 @@ pub(crate) fn render_line(
     // Reverse order: lowest-priority sprites draw first and get the tile budget.
     for s in items.iter().rev() {
         let columns = s.width / 8;
-        let ry = if s.vflip { s.height.wrapping_sub(1).wrapping_sub(s.row) } else { s.row };
+        let ry = tile_row(s, regs.obj_interlace, field);
         for col in 0..columns {
             if tiles >= 34 {
                 flags.time_over = true;

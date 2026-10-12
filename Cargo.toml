@@ -36,7 +36,7 @@ clap = { version = "4.6", features = ["derive"] }
 cpal = "0.18"
 hound = "3.5"
 rtrb = "0.4"
-image = { version = "0.25", default-features = false, features = ["png"] }
+image = { version = "0.25", default-features = false, features = ["png", "bmp"] }
 insta = "1.49"
 thiserror = "2.0"
 tokei = "15.0"

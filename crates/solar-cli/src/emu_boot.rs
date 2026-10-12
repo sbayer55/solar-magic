@@ -97,8 +97,8 @@ pub(crate) fn run(
 /// Saves the current picture as a PNG.
 pub(crate) fn write_frame(console: &Console, path: &Path) -> anyhow::Result<()> {
     let frame = console.frame();
-    let width = u32::try_from(snes_core::FRAME_WIDTH)?;
-    let height = u32::try_from(frame.height)?;
+    let width = u32::try_from(frame.width())?;
+    let height = u32::try_from(frame.height())?;
     let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
         image::ImageBuffer::from_raw(width, height, frame.to_rgba()).context("frame dimensions")?;
     img.save(path).with_context(|| format!("writing {}", path.display()))?;

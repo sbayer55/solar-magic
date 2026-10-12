@@ -14,7 +14,7 @@ const fn clip(v: i32) -> i32 {
 /// and the colour from the low 7 bits (BG2); otherwise all 8 bits are the
 /// colour (BG1, priority 0).
 #[allow(clippy::many_single_char_names, reason = "the matrix registers are named A-D")]
-pub(crate) fn render_line(vram: &Vram, m7: &Mode7Regs, v: u16, extbg: bool, out: &mut [Px; 256]) {
+pub(crate) fn render_line(vram: &Vram, m7: &Mode7Regs, v: u16, extbg: bool, out: &mut [Px; 512]) {
     let y = i32::from(if m7.flip_v { 255u16.wrapping_sub(v & 0xFF) } else { v & 0xFF });
     let (a, b, c, d) = (i32::from(m7.a), i32::from(m7.b), i32::from(m7.c), i32::from(m7.d));
     let (cx, cy) = (i32::from(m7.x), i32::from(m7.y));
@@ -28,7 +28,7 @@ pub(crate) fn render_line(vram: &Vram, m7: &Mode7Regs, v: u16, extbg: bool, out:
         .wrapping_add(d.wrapping_mul(y) & !63)
         .wrapping_add(d.wrapping_mul(vofs) & !63)
         .wrapping_add(cy << 8);
-    for (sx, slot) in out.iter_mut().enumerate() {
+    for (sx, slot) in out.iter_mut().take(256).enumerate() {
         let x = i32::try_from(if m7.flip_h { 255usize.wrapping_sub(sx) } else { sx }).unwrap_or(0);
         let px = origin_x.wrapping_add(a.wrapping_mul(x)) >> 8;
         let py = origin_y.wrapping_add(c.wrapping_mul(x)) >> 8;
