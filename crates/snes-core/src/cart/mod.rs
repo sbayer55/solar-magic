@@ -48,18 +48,18 @@ impl Cartridge {
     /// Wraps a loaded ROM; SRAM is sized from the header (2 KiB for SMW).
     #[must_use]
     pub fn new(rom: &Rom) -> Self {
-        let bytes: Arc<[u8]> = Arc::from(rom.bytes());
+        let sram_len = usize::try_from(rom.header().sram_size_bytes().unwrap_or(0)).unwrap_or(0);
+        Self::from_bytes(rom.bytes(), rom.mapper_kind(), sram_len, rom.header().is_fast_rom())
+    }
+
+    /// Wraps raw image bytes with an explicit mapping (for header-less test
+    /// ROMs that `Rom::from_bytes` would refuse).
+    #[must_use]
+    pub fn from_bytes(image: &[u8], mapper: MapperKind, sram_len: usize, fast_rom: bool) -> Self {
+        let bytes: Arc<[u8]> = Arc::from(image);
         let len = bytes.len();
         let rom_mask = if len.is_power_of_two() { Some(len.wrapping_sub(1)) } else { None };
-        let sram_len = usize::try_from(rom.header().sram_size_bytes().unwrap_or(0)).unwrap_or(0);
-        Self {
-            rom: bytes,
-            rom_mask,
-            mapper: rom.mapper_kind(),
-            sram: Sram::new(sram_len),
-            fast_rom: rom.header().is_fast_rom(),
-            copro: None,
-        }
+        Self { rom: bytes, rom_mask, mapper, sram: Sram::new(sram_len), fast_rom, copro: None }
     }
 
     /// The ROM image.

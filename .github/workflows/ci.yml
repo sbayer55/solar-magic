@@ -38,6 +38,25 @@ jobs:
       - name: Docs
         run: cargo doc --workspace --no-deps --all-features
 
+  emu-roms:
+    name: emulator test ROMs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Audio libraries
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev
+      - name: Cache test ROMs
+        uses: actions/cache@v4
+        with:
+          path: target/test-roms
+          key: test-roms-350b394e86ec5d62f600b5cbf64cdce3721bb6ef
+      - name: Fetch test ROMs
+        run: cargo xtask fetch-test-roms
+      - name: Run test ROMs against their screenshots
+        run: SNES_TEST_ROMS=target/test-roms/SNES cargo test -p snes-core --release --test test_roms -- --nocapture
+
   deny:
     name: cargo-deny
     runs-on: ubuntu-latest

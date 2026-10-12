@@ -3911,6 +3911,7 @@ name = "snes-core"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.13.2",
+ "image",
  "snes-apu",
  "snes-ppu",
  "snes-rom",

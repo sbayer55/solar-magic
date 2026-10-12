@@ -63,5 +63,15 @@ Mario World's title screen; frames 1500/2400 show the attract demo with
 sprites, scrolling and priorities (viewed 2026-10-11). `SMW_ROM`-gated test
 `title_frame_renders` checks the picture has real content, and compares
 it to a hash under `SMW_GOLDENS_DIR` when that is set (write with
-`UPDATE_GOLDENS=1`); goldens stay local. Open-source test-ROM goldens come
-with E7.
+`UPDATE_GOLDENS=1`); goldens stay local.
+
+krom's open-source test ROMs (`cargo xtask fetch-test-roms`, then
+`SNES_TEST_ROMS=target/test-roms/SNES cargo test -p snes-core --release
+--test test_roms`) are compared pixel for pixel with the screenshots shipped
+next to them: on 2026-10-12, 48 of 72 match exactly or within 5‰, including
+all 22 65816 instruction tests, BG map modes 2/4/8 bpp with flips, HiColor
+HDMA (64 and 128 colours per tile row), Mode 7 HDMA, 9-bit and indirect
+HDMA, windows and the mode 7 demos' static frames. The rest are the
+unimplemented interlace and pseudo-hires modes, mode 5 mosaic, and demos
+that animate (page-cycling SPC700 result screens, rotating mode 7, wave
+HDMA), which `SNES_TEST_ROMS_REPORT=1` lists without asserting.

@@ -138,4 +138,10 @@ Dispatch tables beat giant `match` statements.
 - Golden grids: `tests/golden/<level>.grid` dumped from an emulator's
   `$7EC800`/`$7FC800` after loading the level; compared cell-for-cell
   (planned, see the roadmap).
+- Emulator: the two SingleStepTests suites (cycle-exact 65816 and SPC700,
+  env-gated), krom's open-source SNES test ROMs run against their hardware
+  screenshots (`cargo xtask fetch-test-roms`, pinned commit, never vendored;
+  strict list in `crates/snes-core/tests/test_roms.rs`, CI job `emu-roms`),
+  and `SMW_ROM`/`LM_ROM`-gated boot, launch and audio tests with local-only
+  goldens under `SMW_GOLDENS_DIR`.
 - ROMs, disassemblies and Lunar Magic binaries are never committed.

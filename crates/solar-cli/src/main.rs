@@ -255,6 +255,9 @@ enum Command {
         /// Write the final picture as a PNG.
         #[arg(long)]
         out: Option<PathBuf>,
+        /// Load the file as plain LoROM without checking its header.
+        #[arg(long)]
+        raw: bool,
     },
     /// Boots the in-house emulator and plays straight into a level.
     Play {
@@ -298,8 +301,8 @@ fn parse_hex_u16(s: &str) -> Result<u16, String> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::EmuBoot { rom, frames, trace, out } => {
-            emu_boot::run(&rom, frames, trace, out.as_deref())
+        Command::EmuBoot { rom, frames, trace, out, raw } => {
+            emu_boot::run(&rom, frames, trace, out.as_deref(), raw)
         }
         Command::Play { rom, level, frames, midway, exit, powerup, out, audio } => play::run(
             &rom,

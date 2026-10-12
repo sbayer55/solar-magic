@@ -5,6 +5,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod checks;
+mod test_roms;
 
 use std::process::ExitCode;
 
@@ -21,12 +22,15 @@ struct Cli {
 enum Command {
     /// Run every repository check (file size limit, lint hygiene).
     Check,
+    /// Fetch the open-source SNES test ROMs into `target/test-roms`.
+    FetchTestRoms,
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Check => checks::run_all(),
+        Command::FetchTestRoms => test_roms::fetch(),
     };
     match result {
         Ok(()) => ExitCode::SUCCESS,

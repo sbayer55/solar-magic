@@ -29,6 +29,7 @@ cargo solar ips-create <original> <modified> <out.ips> [--log]
 cargo solar ips-info <patch.ips> [--limit N]
 W65C816_TESTS_DIR=~/code/SingleStepTests/65816/v1 cargo test -p w65c816 --release --test single_step   # cycle-exact, both modes
 SPC700_TESTS_DIR=~/code/SingleStepTests/spc700/v1 cargo test -p spc700 --release --test single_step     # cycle-exact
+cargo xtask fetch-test-roms && SNES_TEST_ROMS=target/test-roms/SNES cargo test -p snes-core --release --test test_roms   # open-source test ROMs vs their screenshots (SNES_TEST_ROMS_REPORT=1 lists all)
 cargo solar emu-boot "roms/Super Mario World (USA).sfc" --frames 600 --out title.png [--trace 20000]  # in-house emulator: boot and render
 cargo solar play "roms/Super Mario World (USA).sfc" 105 --frames 120 --out play.png [--audio play.wav] [--midway] [--exit ID] [--powerup 0-3]
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105 [--play]   # GUI editor; --play starts the level in the emulator

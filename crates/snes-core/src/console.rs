@@ -44,9 +44,15 @@ impl Console {
     /// Powers on with `rom` inserted and runs the reset sequence.
     #[must_use]
     pub fn new(rom: &Rom, region: Region) -> Self {
+        Self::with_cartridge(Cartridge::new(rom), region)
+    }
+
+    /// Powers on with an explicit cartridge (test ROMs without a full header).
+    #[must_use]
+    pub fn with_cartridge(cart: Cartridge, region: Region) -> Self {
         let mut console = Self {
             cpu: Cpu::new(),
-            bus: SystemBus::new(Cartridge::new(rom), region),
+            bus: SystemBus::new(cart, region),
             breakpoints: Vec::new(),
             resume_pc: None,
         };
@@ -178,12 +184,17 @@ impl Console {
     }
 
     /// Delivers pending interrupts, then executes one instruction (or six
-    /// idle cycles while the CPU waits for an interrupt).
+    /// idle cycles while the CPU waits for an interrupt or has executed
+    /// `STP`; the rest of the machine keeps running either way).
     ///
     /// # Errors
     ///
-    /// The CPU's stop errors.
+    /// A fatal `BRK` or an exhausted budget.
     pub fn step_instruction(&mut self) -> Result<Exec, CpuError> {
+        if self.cpu.stopped {
+            self.bus.idle();
+            return Ok(Exec::Waiting);
+        }
         if self.bus.regs.irq.nmi_pending {
             self.bus.regs.irq.nmi_pending = false;
             self.cpu.nmi(&mut self.bus);
@@ -196,7 +207,10 @@ impl Console {
             self.bus.idle();
             return Ok(Exec::Waiting);
         }
-        self.cpu.step(&mut self.bus)
+        match self.cpu.step(&mut self.bus) {
+            Err(CpuError::Stopped(w65c816::StopReason::Stp)) => Ok(Exec::Waiting),
+            other => other,
+        }
     }
 
     const fn report(&self, hit: Option<Hit>) -> RunReport {

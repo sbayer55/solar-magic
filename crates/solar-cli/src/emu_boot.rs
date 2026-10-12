@@ -9,10 +9,28 @@ use snes_core::{Console, Input, Region};
 use snes_rom::Rom;
 
 /// Boots `rom` for `frames` frames, then samples `trace` instructions and
-/// optionally writes the last picture.
-pub(crate) fn run(rom: &Path, frames: u32, trace: usize, out: Option<&Path>) -> anyhow::Result<()> {
-    let rom = Rom::load(rom).with_context(|| format!("loading {}", rom.display()))?;
-    let mut console = Console::new(&rom, Region::Ntsc);
+/// optionally writes the last picture. `raw` loads the file as plain LoROM
+/// without checking its internal header (homebrew test ROMs).
+pub(crate) fn run(
+    rom: &Path,
+    frames: u32,
+    trace: usize,
+    out: Option<&Path>,
+    raw: bool,
+) -> anyhow::Result<()> {
+    let mut console = if raw {
+        let bytes = std::fs::read(rom).with_context(|| format!("reading {}", rom.display()))?;
+        let cart = snes_core::Cartridge::from_bytes(
+            &bytes,
+            snes_rom::MapperKind::LoRom(snes_rom::LoRom),
+            0,
+            false,
+        );
+        Console::with_cartridge(cart, Region::Ntsc)
+    } else {
+        let rom = Rom::load(rom).with_context(|| format!("loading {}", rom.display()))?;
+        Console::new(&rom, Region::Ntsc)
+    };
     let mut report = None;
     for _ in 0..frames {
         let r = console.run_frame(Input::default());
