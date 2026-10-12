@@ -32,6 +32,10 @@ pub(crate) enum Command {
     Relaunch(Box<LaunchRequest>),
     /// Controller state.
     Input(Input),
+    /// Remember the machine state.
+    SaveState,
+    /// Return to the remembered state.
+    LoadState,
     /// Exit the thread.
     Quit,
 }
@@ -222,6 +226,7 @@ impl Worker {
         let mut input = Input::default();
         let mut running = true;
         let mut steps_left = 0u32;
+        let mut saved: Option<(Console, Launcher)> = None;
         let mut pacer = Pacer::new();
         loop {
             let command = if running || steps_left > 0 {
@@ -241,6 +246,13 @@ impl Worker {
                     running = true;
                 }
                 Some(Command::Input(new_input)) => input = new_input,
+                Some(Command::SaveState) => saved = Some((console.clone(), launcher.clone())),
+                Some(Command::LoadState) => {
+                    if let Some((c, l)) = saved.as_ref() {
+                        console = c.clone();
+                        launcher = l.clone();
+                    }
+                }
                 Some(Command::Quit) => return,
                 None => {}
             }

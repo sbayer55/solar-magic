@@ -49,6 +49,12 @@ fn transport(ui: &mut egui::Ui, play: &mut PlaySession) {
         if ui.add_enabled(!play.running, egui::Button::new("Frame")).clicked() {
             play.send(Command::Step(1));
         }
+        if ui.button("Save state").on_hover_text("Remember the machine (in memory)").clicked() {
+            play.send(Command::SaveState);
+        }
+        if ui.button("Load state").clicked() {
+            play.send(Command::LoadState);
+        }
         ui.label("Zoom");
         for z in 1..=3u8 {
             if ui.selectable_label(play.zoom == z, format!("{z}×")).clicked() {
