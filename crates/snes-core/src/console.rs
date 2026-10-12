@@ -76,6 +76,12 @@ impl Console {
         &mut self.bus
     }
 
+    /// The picture as rendered so far this frame (complete after vblank).
+    #[must_use]
+    pub const fn frame(&self) -> &snes_ppu::Frame {
+        self.bus.ppu.frame()
+    }
+
     /// Sets both controllers.
     pub const fn set_input(&mut self, input: Input) {
         self.bus.regs.joypads.input = input;

@@ -1,18 +1,21 @@
 //! The SNES picture processor.
 //!
-//! This crate currently models the register file and the three video
-//! memories exactly as the CPU sees them through `$2100-$213F`; the
-//! dot-accurate renderer lands on top of it (see `docs/emulation/ppu.md`).
-//! The PPU does not own the H/V counters: the machine's clock passes the
-//! current [`Position`] with every register access.
+//! Models the register file and the three video memories exactly as the
+//! CPU sees them through `$2100-$213F`, and renders the picture as the
+//! raster advances (`Ppu::run_to`; see `docs/emulation/ppu.md`). The PPU
+//! does not own the H/V counters: the machine's clock passes the current
+//! [`Position`] with every register access.
 
 mod bits;
 mod cgram;
+mod frame;
 mod oam;
 mod regs;
+mod render;
 mod vram;
 
 pub use cgram::Cgram;
+pub use frame::{FRAME_HEIGHT, FRAME_WIDTH, Frame};
 pub use oam::Oam;
 pub use regs::{BgRegs, Mode7Regs, Regs};
 pub use vram::Vram;
@@ -69,6 +72,7 @@ pub struct Ppu {
     latch_enabled: bool,
     /// PAL console.
     pal: bool,
+    render: render::Renderer,
 }
 
 impl Default for Ppu {
@@ -91,6 +95,7 @@ impl Ppu {
             ppu2_mdr: 0,
             latch_enabled: true,
             pal,
+            render: render::Renderer::default(),
         }
     }
 
@@ -253,6 +258,7 @@ impl Ppu {
         self.status.field = field;
         self.status.range_over = false;
         self.status.time_over = false;
+        self.render.restart_frame();
     }
 }
 

@@ -29,7 +29,7 @@ cargo solar ips-create <original> <modified> <out.ips> [--log]
 cargo solar ips-info <patch.ips> [--limit N]
 W65C816_TESTS_DIR=~/code/SingleStepTests/65816/v1 cargo test -p w65c816 --release --test single_step   # cycle-exact, both modes
 SPC700_TESTS_DIR=~/code/SingleStepTests/spc700/v1 cargo test -p spc700 --release --test single_step     # cycle-exact
-cargo solar emu-boot "roms/Super Mario World (USA).sfc" --frames 600 --trace 20000  # in-house emulator: boot to the title screen
+cargo solar emu-boot "roms/Super Mario World (USA).sfc" --frames 600 --out title.png [--trace 20000]  # in-house emulator: boot and render
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105   # GUI editor
 ```
 

@@ -16,3 +16,4 @@ pub use cart::Cartridge;
 pub use clock::{Clock, Events, Region};
 pub use console::{Console, Hit, RunReport};
 pub use input::{Buttons, Input};
+pub use snes_ppu::{FRAME_HEIGHT, FRAME_WIDTH, Frame};

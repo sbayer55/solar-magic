@@ -8,8 +8,9 @@ use anyhow::Context;
 use snes_core::{Console, Input, Region};
 use snes_rom::Rom;
 
-/// Boots `rom` for `frames` frames, then samples `trace` instructions.
-pub(crate) fn run(rom: &Path, frames: u32, trace: usize) -> anyhow::Result<()> {
+/// Boots `rom` for `frames` frames, then samples `trace` instructions and
+/// optionally writes the last picture.
+pub(crate) fn run(rom: &Path, frames: u32, trace: usize, out: Option<&Path>) -> anyhow::Result<()> {
     let rom = Rom::load(rom).with_context(|| format!("loading {}", rom.display()))?;
     let mut console = Console::new(&rom, Region::Ntsc);
     let mut report = None;
@@ -66,21 +67,41 @@ pub(crate) fn run(rom: &Path, frames: u32, trace: usize) -> anyhow::Result<()> {
         console.bus().clock.vblank(),
         console.bus().clock.v
     );
+    if let Some(path) = out {
+        write_frame(&console, path)?;
+    }
     if trace > 0 {
-        let mut histogram: BTreeMap<u32, u32> = BTreeMap::new();
-        for _ in 0..trace {
-            let slot: &mut u32 = histogram.entry(console.cpu().pc24()).or_default();
-            *slot = slot.saturating_add(1);
-            if console.step_instruction().is_err() {
-                break;
-            }
-        }
-        let mut hot: Vec<(u32, u32)> = histogram.into_iter().collect();
-        hot.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
-        println!("hottest instruction addresses over the next {trace} instructions:");
-        for (pc, n) in hot.iter().take(16) {
-            println!("  {:02X}:{:04X}  {n}", pc >> 16, pc & 0xFFFF);
-        }
+        print_hot_addresses(&mut console, trace);
     }
     Ok(())
+}
+
+/// Saves the current picture as a PNG.
+fn write_frame(console: &Console, path: &Path) -> anyhow::Result<()> {
+    let frame = console.frame();
+    let width = u32::try_from(snes_core::FRAME_WIDTH)?;
+    let height = u32::try_from(frame.height)?;
+    let img: image::ImageBuffer<image::Rgba<u8>, Vec<u8>> =
+        image::ImageBuffer::from_raw(width, height, frame.to_rgba()).context("frame dimensions")?;
+    img.save(path).with_context(|| format!("writing {}", path.display()))?;
+    println!("wrote {} ({width}x{height})", path.display());
+    Ok(())
+}
+
+/// Runs `trace` more instructions and prints the most-executed addresses.
+fn print_hot_addresses(console: &mut Console, trace: usize) {
+    let mut histogram: BTreeMap<u32, u32> = BTreeMap::new();
+    for _ in 0..trace {
+        let slot: &mut u32 = histogram.entry(console.cpu().pc24()).or_default();
+        *slot = slot.saturating_add(1);
+        if console.step_instruction().is_err() {
+            break;
+        }
+    }
+    let mut hot: Vec<(u32, u32)> = histogram.into_iter().collect();
+    hot.sort_by_key(|&(_, n)| std::cmp::Reverse(n));
+    println!("hottest instruction addresses over the next {trace} instructions:");
+    for (pc, n) in hot.iter().take(16) {
+        println!("  {:02X}:{:04X}  {n}", pc >> 16, pc & 0xFFFF);
+    }
 }

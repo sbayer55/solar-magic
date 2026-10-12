@@ -129,6 +129,7 @@ impl SystemBus {
             self.ppu.frame_start(self.clock.field);
         }
         if ev.contains(Events::LINE_START) {
+            self.ppu.run_to(self.clock.position());
             self.apu.run_to(self.clock.now);
             self.clock.overscan = self.ppu.overscan();
             if self.clock.v == self.clock.vdisp() {
@@ -177,6 +178,7 @@ impl SystemBus {
                 0x0000..=0x1FFF => self.wram.read(u32::from(offset)),
                 0x2100..=0x213F => {
                     let pos = self.position();
+                    self.ppu.run_to(pos);
                     self.ppu.read(lo(offset), self.mdr, pos)
                 }
                 0x2140..=0x217F => {
@@ -211,6 +213,7 @@ impl SystemBus {
                 0x0000..=0x1FFF => self.wram.write(u32::from(offset), v),
                 0x2100..=0x213F => {
                     let pos = self.position();
+                    self.ppu.run_to(pos);
                     self.ppu.write(lo(offset), v, pos);
                 }
                 0x2140..=0x217F => {

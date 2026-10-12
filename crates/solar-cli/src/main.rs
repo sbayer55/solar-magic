@@ -251,6 +251,9 @@ enum Command {
         /// Instructions to sample afterwards for a hot-address histogram.
         #[arg(long, default_value_t = 0)]
         trace: usize,
+        /// Write the final picture as a PNG.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
 }
 
@@ -268,7 +271,9 @@ fn parse_hex_u16(s: &str) -> Result<u16, String> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::EmuBoot { rom, frames, trace } => emu_boot::run(&rom, frames, trace),
+        Command::EmuBoot { rom, frames, trace, out } => {
+            emu_boot::run(&rom, frames, trace, out.as_deref())
+        }
         Command::Info { rom } => info::run(&rom),
         Command::DumpGfx { rom, out_dir, id, scale, row, exgfx } => {
             dump_gfx::run(&rom, &out_dir, dump_gfx::Options { id, scale, row, exgfx })

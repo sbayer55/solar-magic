@@ -30,7 +30,7 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | G5 direct Map16 paint tool | pending (needs Lunar Magic's object format) |
 | Lunar Magic ROM compatibility, rendering fidelity (sprites, priority, layer 3), overworld | planned, see `docs/ARCHITECTURE.md` |
 | Tools: IPS patcher (`solar ips-apply` / `ips-create` / `ips-info`, GUI Tools → IPS Patcher) | done: Lunar IPS parity (RLE, expand/truncate, apply log, copier-header add/strip) |
-| In-house SNES emulator (`snes-core`, `snes-ppu`, `spc700`, `snes-apu`; `solar emu-boot`) | E0–E2 done: cycle-exact 65c816 and SPC700, machine core, S-SMP with boot-ROM handshake; SMW boots to its title screen. PPU renderer, S-DSP audio, play panel next (`docs/emulation/`) |
+| In-house SNES emulator (`snes-core`, `snes-ppu`, `spc700`, `snes-apu`; `solar emu-boot --out frame.png`) | E0–E3 done: cycle-exact 65c816 and SPC700, machine core, S-SMP with boot-ROM handshake, PPU renderer (modes 0-7, sprites, windows, colour math); SMW's title screen and attract demo render. Launch-into-level, play panel, S-DSP audio next (`docs/emulation/`) |
 
 ## Try it
 
