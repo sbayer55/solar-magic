@@ -2,28 +2,31 @@
 
 Solar Magic is a Rust reimplementation of Lunar Magic, the Super Mario World
 level editor. This document is the map; the format details live in
-[`formats/`](formats/).
+[`formats/`](formats/) and the emulator's hardware notes in
+[`emulation/`](emulation/).
 
 ## Crate graph
 
 ```
-solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump/patch tools)
-        │         │                         │         │
-        │         └────────────┬────────────│─────────┘
-        │                      ▼            │
-        │                     ips           │       IPS patch parse/apply/create
-        └──────────────┬────────────────────┘
-                       ▼
-                  smw-render        Level → Map16 grid → RGBA raster
-                       │
+solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump/patch/emu tools)
+        │         │                         │         │        │
+        │         └────────────┬────────────│─────────┘        ▼
+        │                      ▼            │              smw-play    launch a level, overlay edits
+        │                     ips           │                  ▼
+        └──────────────┬────────────────────┘              snes-core   the machine: clock, bus,
+                                                               │       DMA, cart, Console
+                       ▼                         ┌────────┬───┴────┬────────┐
+                  smw-render        Level → grid ▼        ▼        ▼        ▼
+                       │            → RGBA raster snes-ppu snes-apu snes-sa1 (snes-rom, w65c816)
                        ▼
                    smw-data         SMW formats: RomLayout, headers, objects,
                        │            sprites, Map16, GFX, palettes
         ┌──────────────┼──────────────┐
         ▼              ▼              ▼
     snes-rom        lc-lz2         w65c816
-  ROM container,  compression   65c816 interpreter that runs the
-  LoROM mapping,                game's own object routines
+  ROM container,  compression   cycle-exact 65c816 interpreter; runs the
+  LoROM/ExLoROM/                game's object routines untimed, and the
+  SA-1 mapping,                 whole game under snes-core
   header, RATS
 ```
 
@@ -32,14 +35,20 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 
 | Crate | Status | Responsibility |
 |---|---|---|
-| `snes-rom` | done | `Rom` (read, write, expand, checksum, save), `SnesAddr`, `Mapper`/`MapperKind`, `InternalHeader`, `rats::{scan, alloc}`, `copier_header` add/strip. No game knowledge. |
+| `snes-rom` | done | `Rom` (read, write, expand, checksum, save), `SnesAddr`, `Mapper`/`MapperKind` (LoROM, ExLoROM, SA-1 power-on map), `InternalHeader`, `rats::{scan, alloc}`, `copier_header` add/strip. No game knowledge. |
 | `ips` | done | IPS patch parse/serialize/apply/create with RLE and the Lunar IPS truncation extension; 16 MiB limit; avoids the `0x454F46` EOF-offset trap. No game knowledge. See `formats/ips.md`. |
 | `smw-data` | viewer, LM reading, editing, `.mwl` | `RomLayout` (vanilla tables plus Lunar Magic's `LunarMagicTables` with per-feature detection, known free space, `known_ranges`, markers), `LevelId`, `gfx`, `palette`, `map16`, `tileset`, `level` (headers with bit-field tables, objects including Lunar Magic's, layer 2 including 16-bit tilemaps with an RLE codec, sprites, secondary exits; byte-exact re-serialization; editing API; vanilla-safe `save_level`), `formats::mwl` (Lunar Magic level files, export and import). |
 | `lc-lz2` | done | LC_LZ2 decompress and compress. |
-| `w65c816` | done | Minimal CPU interpreter with a `Bus` trait. No timing, no PPU. Passes the SingleStepTests 65816 native-mode suite (run with `W65C816_TESTS_DIR`). |
+| `w65c816` | done | CPU interpreter with a `Bus` trait. Cycle-exact through `Bus::idle` (a no-op for untimed buses), hardware `nmi`/`irq`/`reset`, `WAI`/`STP` states. Passes all 512 SingleStepTests 65816 files, native and emulation mode, including the exact bus-cycle sequence (`W65C816_TESTS_DIR`). See `docs/emulation/cpu.md`. |
+| `snes-ppu` | renders modes 0-7 | `Ppu`: `$2100-$213F` decoded into `Regs`, `Vram`/`Oam`/`Cgram` with their port quirks, counter latches, open-bus bits; renderer with per-line layer buffers and per-dot compositing (sprites with the 32/34 limits, windows, colour math, direct colour, mosaic, mode 7 + EXTBG), BGR555 `Frame`. Hi-res/interlace/offset-per-tile pending. `docs/emulation/ppu.md`. |
+| `spc700` | done | Cycle-exact SPC700 core (`Spc700`, `ApuBus`, 256-entry table); passes all 256 SingleStepTests files with exact cycle sequences (`SPC700_TESTS_DIR`). |
+| `snes-apu` | done | `Apu`/`Smp`: 64 KiB RAM, `$F0-$FF` registers, timers, CPU ports, exact master↔SPC clock ratio, boot ROM modelled at port level (`Ipl::Hle`) or supplied (`Ipl::Rom`); `Dsp`: eight BRR voices with Gaussian interpolation, ADSR/GAIN, noise, echo FIR and mixer at 32 kHz (`take_audio`). `docs/emulation/apu.md`. |
+| `snes-sa1` | unit-tested only | `Sa1`: second `w65c816::Cpu` over its own bus with I-RAM, BW-RAM (linear, windowed, bitmap), Super MMC, programmable vectors, interrupts both ways, H/V timer, DMA and character conversion, arithmetic unit, bit reader; behind `snes-core`'s `Coprocessor` trait. No SA-1 ROM available locally. `docs/emulation/sa1.md`. |
+| `snes-core` | boots SMW to the title screen | `Clock` (master cycles, lines, dots, events), `SystemBus` (speeds, open bus, routing, lazy catch-up), `CpuRegs` (NMI/IRQ, ALU, joypads), `Dma` (GPDMA/HDMA), `Cartridge` (ROM, SRAM, `Coprocessor` hook), `Console` facade (run frames, breakpoints, peek/poke, overlays). `docs/emulation/{timing,memory-map}.md`. |
+| `smw-play` | launches levels | `Launcher`: boots to the title screen, pokes player state and game mode, substitutes the level number at the entry routine's breakpoint, overlays unsaved edits (`docs/formats/smw-launch-protocol.md`). `MarioState`, `Entrance::{Main, Midway, SecondaryExit, Position}`. |
 | `smw-render` | viewer, LM 2.5x, ownership, tracing | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays and an optional access `Trace`) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
-| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `trace`, `diff-rom`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `mwl-export`, `mwl-import`, `mwl-info`, `export-all`, `import-all`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`. Also the test oracle. |
-| `solar-magic` | editor | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette. Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
+| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `trace`, `diff-rom`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `mwl-export`, `mwl-import`, `mwl-info`, `export-all`, `import-all`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`, `emu-boot`, `emu-bench`, `play`. Also the test oracle. |
+| `solar-magic` | editor + play | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette, a Play panel (Tools → Play Level, Ctrl+T; right-click a tile → Play from here) that runs the edited level in the in-house emulator on its own thread with keyboard or gamepad input and sound (cpal, paced on the audio queue), save/load state, a rewind ring (10 s) and `<rom>.srm` battery saves, and a Debug panel (registers, disassembly with click-to-break, breakpoints, watches, memory page, instruction trace, single-step). Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
 
 ## The vanilla / Lunar Magic seam
 
@@ -161,4 +170,10 @@ Dispatch tables beat giant `match` statements.
 - Golden grids: `tests/golden/<level>.grid` dumped from an emulator's
   `$7EC800`/`$7FC800` after loading the level; compared cell-for-cell
   (planned, see the roadmap).
+- Emulator: the two SingleStepTests suites (cycle-exact 65816 and SPC700,
+  env-gated), krom's open-source SNES test ROMs run against their hardware
+  screenshots (`cargo xtask fetch-test-roms`, pinned commit, never vendored;
+  strict list in `crates/snes-core/tests/test_roms.rs`, CI job `emu-roms`),
+  and `SMW_ROM`/`LM_ROM`-gated boot, launch and audio tests with local-only
+  goldens under `SMW_GOLDENS_DIR`.
 - ROMs, disassemblies and Lunar Magic binaries are never committed.

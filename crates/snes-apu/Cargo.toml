@@ -1,0 +1,15 @@
+[package]
+name = "snes-apu"
+description = "SNES audio unit: SPC700 SMP, timers, CPU ports and the S-DSP."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+spc700 = { path = "../spc700" }
+
+[lints]
+workspace = true

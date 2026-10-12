@@ -1,0 +1,21 @@
+[package]
+name = "smw-play"
+description = "Sends a running Super Mario World into a chosen level inside the in-house emulator, with unsaved edits overlaid."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+smw-data.workspace = true
+snes-core.workspace = true
+snes-rom.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+smw-render.workspace = true
+
+[lints]
+workspace = true

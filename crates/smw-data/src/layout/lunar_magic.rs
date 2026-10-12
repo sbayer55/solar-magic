@@ -9,7 +9,7 @@
 
 use snes_rom::{Rom, RomError, SnesAddr};
 
-use super::{LayoutKind, RomLayout, VANILLA};
+use super::{LaunchHooks, LayoutKind, RomLayout, VANILLA};
 use crate::level::ExitId;
 use crate::{LayoutError, LevelId};
 
@@ -227,6 +227,17 @@ pub const LM_25X: LunarMagicTables = LunarMagicTables {
     ram_level_flags: 0x7F_C00B,
 };
 
+/// Lunar Magic 2.5x rewrites the end of the level-entry routine: after its
+/// `JSL $05:DCD0` high-byte hook, `$05:D8BC` holds
+/// `REP #$30 / LDA $0E / STA $010B / ASL / CLC / ADC $0E / TAY`, so the
+/// level number is final there and the routine itself copies it to `$010B`.
+/// Verified against Quickie World 2 (LM 2.53), 2026-10-11. Lunar Magic 3.71
+/// leaves this routine as in vanilla (`$05:D8B7`, checked on an LM 3.71
+/// ROM 2026-10-12), so the hooks are chosen per ROM in [`detect`].
+const LM_LEVEL_SELECT_PC: SnesAddr = SnesAddr::lit(0x05_D8BC);
+const LM_LEVEL_SELECT_FINGERPRINT: &[u8] =
+    &[0xC2, 0x30, 0xA5, 0x0E, 0x8D, 0x0B, 0x01, 0x0A, 0x18, 0x65, 0x0E, 0xA8];
+
 /// Bytes that must be present at an address.
 struct Check {
     addr: SnesAddr,
@@ -407,8 +418,26 @@ pub(super) fn detect(rom: &Rom, signature: String) -> Result<RomLayout, LayoutEr
         sprite_banks: scan.features.contains(LmFeatures::SPRITE_BANKS).then_some(lm.sprite_banks),
         known_free: &[],
         lm: Some(lm),
+        launch: launch_hooks(rom),
         ..VANILLA
     })
+}
+
+/// The level-entry hooks for this ROM: 2.5x's rewritten routine when its
+/// bytes are present, else vanilla's (3.71 keeps the vanilla code).
+fn launch_hooks(rom: &Rom) -> LaunchHooks {
+    let rewritten = rom
+        .read(LM_LEVEL_SELECT_PC, LM_LEVEL_SELECT_FINGERPRINT.len())
+        .is_ok_and(|bytes| bytes == LM_LEVEL_SELECT_FINGERPRINT);
+    if rewritten {
+        LaunchHooks {
+            level_select_pc: LM_LEVEL_SELECT_PC,
+            level_select_fingerprint: LM_LEVEL_SELECT_FINGERPRINT,
+            ..VANILLA.launch
+        }
+    } else {
+        VANILLA.launch
+    }
 }
 
 /// Extracts `(major, minor)` from `"Lunar Magic Version 2.53 Public"`.

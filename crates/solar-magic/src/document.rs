@@ -32,6 +32,8 @@ pub(crate) struct Document {
     pub(crate) rendered_with: Option<RenderOptions>,
     /// Last message for the status bar.
     pub(crate) status: String,
+    /// The level running in the emulator, if started.
+    pub(crate) play: Option<crate::play::PlaySession>,
 }
 
 impl std::fmt::Debug for Document {
@@ -63,9 +65,41 @@ impl Document {
             map16_texture: None,
             rendered_with: None,
             status: String::new(),
+            play: None,
         };
         doc.select(level);
         Ok(doc)
+    }
+
+    /// Starts (or restarts) the emulator on the level as currently edited,
+    /// entering at `entrance` (and, with `pixel`, standing exactly there).
+    pub(crate) fn start_play(
+        &mut self,
+        ctx: &egui::Context,
+        entrance: smw_play::Entrance,
+        pixel: Option<(u16, u16)>,
+    ) {
+        let level = match self.session.as_ref() {
+            Some(session) => session.level.clone(),
+            None => match Level::load(&self.rom, &self.layout, self.level) {
+                Ok(level) => level,
+                Err(err) => {
+                    self.status = format!("cannot play: {err}");
+                    return;
+                }
+            },
+        };
+        let mario = smw_play::MarioState { entrance, ..smw_play::MarioState::default() };
+        let request = smw_play::LaunchRequest { level, mario, pixel };
+        if let Some(play) = self.play.as_mut() {
+            play.running = true;
+            play.send(crate::play::Command::Relaunch(Box::new(request)));
+        } else {
+            let srm = Some(self.path.with_extension("srm"));
+            self.play =
+                Some(crate::play::PlaySession::start(ctx, &self.rom, &self.layout, request, srm));
+        }
+        self.status = format!("playing level {}", self.level);
     }
 
     /// Loads another level, discarding any edits.

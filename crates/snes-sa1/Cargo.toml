@@ -1,0 +1,15 @@
+[package]
+name = "snes-sa1"
+description = "SNES SA-1 coprocessor: a second 65c816 with its own I-RAM, BW-RAM, Super MMC, DMA, character conversion, arithmetic and bit reader."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+w65c816 = { path = "../w65c816" }
+
+[lints]
+workspace = true

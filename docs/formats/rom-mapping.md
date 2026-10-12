@@ -19,8 +19,47 @@ bank = PC >> 15      (use $FE/$FF instead of $7E/$7F, which are WRAM)
 | `$0F:FFFF` | `0x07FFFF` | last byte of a 512 KiB ROM |
 
 `$0000-$7FFF` of any bank is treated as non-ROM. `$7E`/`$7F` are WRAM.
-Lunar Magic can expand ROMs beyond 4 MiB (ExLoROM, map mode `$32`) or convert
-them to SA-1 (`$23`); both are detected and rejected for now.
+
+## ExLoROM (map mode $32) — `snes_rom::ExLoRom`
+
+Lunar Magic's layout for ROMs above 4 MiB. The bank's top bit is inverted
+relative to LoROM:
+
+| SNES | PC |
+|---|---|
+| `$80-$BF:$8000-$FFFF`, `$C0-$FF:$0000-$FFFF` | `((bank & 0x7F) << 15) \| (offset & 0x7FFF)` — the first 4 MiB, exactly as LoROM |
+| `$00-$3F:$8000-$FFFF`, `$40-$7D:$0000-$FFFF` | `0x400000 + (((bank & 0x7F) << 15) \| (offset & 0x7FFF))` — the second 4 MiB |
+
+Banks `$7E`/`$7F` are WRAM, so file offsets `0x7F0000-0x7FFFFF` are
+unreachable. The lower halves of banks `$40-$7D`/`$C0-$FF` mirror their upper
+halves (LoROM style). Bank `$00`'s internal header therefore sits at file
+offset `0x407FC0`; `Rom::from_bytes` reads it there when the image is larger
+than 4 MiB and it declares `$32`.
+
+**Verification status:** matches the extended-LoROM map of snes9x
+(`Map_ExtendedLoROMMap`) and bsnes; fullsnes does not describe it. Not yet
+checked against a Lunar Magic–expanded ROM (none in `roms/`); do that before
+`smw_data::RomLayout` relies on it.
+
+## SA-1 (map mode $23) — `snes_rom::Sa1Rom`
+
+The S-CPU's view at power-on, before the game writes the Super MMC registers
+`$2220-$2223` (CXB/DXB/EXB/FXB, reset to blocks 0–3 with the LoROM bit
+clear):
+
+| SNES | PC |
+|---|---|
+| `$00-$3F:$8000-$FFFF` | `(bank << 15) \| (offset & 0x7FFF)` — first 2 MiB |
+| `$80-$BF:$8000-$FFFF` | `0x200000 + (((bank & 0x3F) << 15) \| (offset & 0x7FFF))` — next 2 MiB |
+| `$C0-$FF:$0000-$FFFF` | `((bank & 0x3F) << 16) \| offset` — the same 4 MiB as HiROM-style 1 MiB blocks |
+| `$40-$4F`, `$00-$3F/$80-$BF:$6000-$7FFF` | BW-RAM (not ROM) |
+| `$00-$3F/$80-$BF:$3000-$37FF` | I-RAM; `$2200-$23FF` SA-1 registers |
+
+Verified 2026-10-11 against fullsnes, "SNES Cart SA-1 Memory Control": with
+bit 7 of the MMC registers clear, "first 2 MByte of ROM are mapped to
+00h-3Fh, and next 2 MByte to 80h-BFh". Game code reprograms the blocks at
+runtime; that live mapping is the emulator's job (`snes-sa1`), and file
+offsets at or above 4 MiB have no static address (`to_snes` returns `None`).
 
 ## Copier header
 
@@ -34,7 +73,7 @@ on raw file bytes for IPS patching; see `ips.md`.
 | Offset | Size | Field | Vanilla SMW (USA) |
 |---|---|---|---|
 | `$FFC0` | 21 | Title, space padded | `SUPER MARIOWORLD     ` |
-| `$FFD5` | 1 | Map mode (`$20` LoROM, `$21` HiROM, `$23` SA-1, `$25` ExHiROM, `$32` ExLoROM; `+$10` FastROM) | `$20` |
+| `$FFD5` | 1 | Map mode (`$20` LoROM, `$21` HiROM, `$23` SA-1, `$25` ExHiROM, `$32` ExLoROM; `+$10` FastROM). HiROM/ExHiROM are still rejected. | `$20` |
 | `$FFD6` | 1 | Cartridge type | `$02` (ROM + RAM + battery) |
 | `$FFD7` | 1 | ROM size: `1 << (n + 10)` bytes | `$09` (512 KiB) |
 | `$FFD8` | 1 | SRAM size: `1 << (n + 10)` bytes, 0 = none | `$01` (2 KiB) |

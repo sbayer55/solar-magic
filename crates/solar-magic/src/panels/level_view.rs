@@ -74,6 +74,8 @@ impl Viewer<'_> {
                     })
                 };
                 hovered = response.hover_pos().and_then(to_tile);
+                let clicked_tile = response.interact_pointer_pos().and_then(to_tile);
+                play_from_menu(ui, &response, clicked_tile, &mut actions);
                 let pointer = Pointer {
                     hovered: response.interact_pointer_pos().and_then(to_tile).or(hovered),
                     drag_started: response.drag_started_by(PointerButton::Primary),
@@ -92,6 +94,30 @@ impl Viewer<'_> {
         ui.data_mut(|d| d.insert_temp(egui::Id::new("status_text"), status));
         self.actions.append(&mut actions);
     }
+}
+
+/// Right-click menu offering to play the level from the clicked tile.
+fn play_from_menu(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    clicked_tile: Option<TilePos>,
+    actions: &mut Vec<Action>,
+) {
+    let menu_tile_id = egui::Id::new("play_from_tile");
+    if response.secondary_clicked()
+        && let Some(tile) = clicked_tile
+    {
+        ui.data_mut(|d| d.insert_temp(menu_tile_id, tile));
+    }
+    response.context_menu(|menu| {
+        let tile = menu.data(|d| d.get_temp::<TilePos>(menu_tile_id));
+        if let Some(tile) = tile
+            && menu.button(format!("Play from here (screen {:X})", tile.x / 16)).clicked()
+        {
+            actions.push(Action::PlayFrom(tile));
+            menu.close();
+        }
+    });
 }
 
 /// The hover text and the document's last message.

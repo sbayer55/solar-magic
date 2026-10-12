@@ -11,6 +11,11 @@ pub trait Bus {
     /// Writes one byte. Writes to ROM or unmapped space may be ignored.
     fn write(&mut self, addr: Addr, value: u8);
 
+    /// One internal CPU cycle with no bus activity. Untimed buses ignore it;
+    /// a timed bus charges the CPU's internal-cycle cost and lets the rest
+    /// of the machine catch up.
+    fn idle(&mut self) {}
+
     /// Reads a little-endian 16-bit word at `addr` and `addr + 1` (no wrap handling).
     fn read_u16(&mut self, addr: Addr) -> u16 {
         let lo = self.read(addr);

@@ -1,5 +1,6 @@
 //! The dockable panels.
 
+mod debug;
 mod exits;
 mod header;
 mod info;
@@ -8,6 +9,7 @@ mod levels;
 mod map16;
 mod overlays;
 mod palette;
+mod play;
 mod tools;
 
 use egui_dock::TabViewer;
@@ -36,10 +38,14 @@ pub(crate) enum Tab {
     Map16,
     /// The 16×16 palette.
     Palette,
+    /// The level running in the emulator.
+    Play,
+    /// Registers, disassembly, breakpoints, watches, memory, trace.
+    Debug,
 }
 
 /// Every tab, for the Window menu.
-pub(crate) const ALL_TABS: [Tab; 8] = [
+pub(crate) const ALL_TABS: [Tab; 10] = [
     Tab::Level,
     Tab::Levels,
     Tab::Info,
@@ -48,6 +54,8 @@ pub(crate) const ALL_TABS: [Tab; 8] = [
     Tab::Exits,
     Tab::Map16,
     Tab::Palette,
+    Tab::Play,
+    Tab::Debug,
 ];
 
 impl Tab {
@@ -62,6 +70,8 @@ impl Tab {
             Self::Exits => "Exits",
             Self::Map16 => "Map16",
             Self::Palette => "Palette",
+            Self::Play => "Play",
+            Self::Debug => "Debug",
         }
     }
 }
@@ -75,6 +85,8 @@ pub(crate) enum Action {
     ApplyGrouped(EditCommand, u64),
     /// Switch to another level (after a dirty check).
     SelectLevel(LevelId),
+    /// Start playing the level at the entrance nearest to a tile.
+    PlayFrom(smw_data::level::TilePos),
 }
 
 /// Mutable context handed to the dock while drawing.
@@ -108,6 +120,8 @@ impl TabViewer for Viewer<'_> {
             Tab::Exits => self.exits_panel(ui),
             Tab::Map16 => self.map16(ui),
             Tab::Palette => self.palette(ui),
+            Tab::Play => self.play_panel(ui),
+            Tab::Debug => self.debug_panel(ui),
         }
     }
 }

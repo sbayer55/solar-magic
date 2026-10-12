@@ -12,6 +12,8 @@ mod dump_gfx;
 mod dump_level;
 mod dump_map16;
 mod dump_owners;
+mod emu_bench;
+mod emu_boot;
 mod expand;
 mod free_space;
 mod gfx_check;
@@ -21,6 +23,7 @@ mod ips_create;
 mod ips_info;
 mod level_io;
 mod mwl;
+mod play;
 mod png;
 mod render;
 mod trace;
@@ -346,6 +349,60 @@ enum Command {
         #[arg(long)]
         limit: Option<usize>,
     },
+    /// Boots a ROM in the in-house SNES emulator and reports the CPU state.
+    EmuBoot {
+        /// ROM file.
+        rom: PathBuf,
+        /// Frames to run.
+        #[arg(long, default_value_t = 60)]
+        frames: u32,
+        /// Instructions to sample afterwards for a hot-address histogram.
+        #[arg(long, default_value_t = 0)]
+        trace: usize,
+        /// Write the final picture as a PNG.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Load the file as plain LoROM without checking its header.
+        #[arg(long)]
+        raw: bool,
+    },
+    /// Times the in-house emulator: frames per second after a warm-up.
+    EmuBench {
+        /// ROM file.
+        rom: PathBuf,
+        /// Frames to time.
+        #[arg(long, default_value_t = 600)]
+        frames: u32,
+        /// Frames to run first (boot) without timing.
+        #[arg(long, default_value_t = 120)]
+        warmup: u32,
+    },
+    /// Boots the in-house emulator and plays straight into a level.
+    Play {
+        /// ROM file.
+        rom: PathBuf,
+        /// Level number (hex, e.g. `105`).
+        #[arg(value_parser = parse_hex_u16)]
+        level: u16,
+        /// Frames to run once the level is playing.
+        #[arg(long, default_value_t = 120)]
+        frames: u32,
+        /// Start at the midway entrance.
+        #[arg(long)]
+        midway: bool,
+        /// Enter through a secondary exit (hex).
+        #[arg(long, value_parser = parse_hex_u16)]
+        exit: Option<u16>,
+        /// Powerup: 0 small, 1 big, 2 cape, 3 fire.
+        #[arg(long, default_value_t = 0)]
+        powerup: u8,
+        /// Write the final picture as a PNG.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Write the sound since the level started as a 32 kHz WAV.
+        #[arg(long)]
+        audio: Option<PathBuf>,
+    },
 }
 
 /// Parses a hexadecimal byte with or without a `0x` prefix.
@@ -362,6 +419,15 @@ fn parse_hex_u16(s: &str) -> Result<u16, String> {
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
+        Command::EmuBoot { rom, frames, trace, out, raw } => {
+            emu_boot::run(&rom, frames, trace, out.as_deref(), raw)
+        }
+        Command::EmuBench { rom, frames, warmup } => emu_bench::run(&rom, frames, warmup),
+        Command::Play { rom, level, frames, midway, exit, powerup, out, audio } => play::run(
+            &rom,
+            play::Outputs { image: out.as_deref(), audio: audio.as_deref() },
+            play::Options { level, frames, midway, exit, powerup },
+        ),
         Command::Info { rom } => info::run(&rom),
         Command::DumpGfx { rom, out_dir, id, scale, row, exgfx } => {
             dump_gfx::run(&rom, &out_dir, dump_gfx::Options { id, scale, row, exgfx })

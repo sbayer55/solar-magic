@@ -73,6 +73,8 @@ pub(crate) struct Launch {
     pub(crate) rom: Option<PathBuf>,
     /// Level to show instead of the remembered one.
     pub(crate) level: Option<u16>,
+    /// Start playing the level immediately.
+    pub(crate) play: bool,
 }
 
 /// Something that must wait for the user to confirm discarding edits.
@@ -115,6 +117,7 @@ const COPY: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::C)
 const CUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::X);
 const PASTE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::V);
 const SELECT_ALL: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
+const PLAY: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::T);
 
 impl App {
     /// Creates the app, opening the launch ROM or else the remembered one.
@@ -141,7 +144,31 @@ impl App {
         if let Some(path) = path {
             app.open(&path);
         }
+        if launch.play {
+            app.play_level(&cc.egui_ctx);
+        }
         app
+    }
+
+    /// Starts (or restarts) the current level in the emulator and shows the panel.
+    fn play_level(&mut self, ctx: &egui::Context) {
+        self.play_level_at(ctx, smw_play::Entrance::Main, None);
+    }
+
+    /// Starts the current level at `entrance` and shows the panel.
+    fn play_level_at(
+        &mut self,
+        ctx: &egui::Context,
+        entrance: smw_play::Entrance,
+        pixel: Option<(u16, u16)>,
+    ) {
+        let Some(doc) = self.doc.as_mut() else {
+            return;
+        };
+        doc.start_play(ctx, entrance, pixel);
+        if self.dock.find_tab(&Tab::Play).is_none() {
+            self.dock.push_to_focused_leaf(Tab::Play);
+        }
     }
 
     fn open(&mut self, path: &Path) {
@@ -329,8 +356,12 @@ impl App {
             }
         });
         let save = ctx.input_mut(|i| i.consume_shortcut(&SAVE));
+        let play = ctx.input_mut(|i| i.consume_shortcut(&PLAY));
         for action in pressed {
             self.edit_menu_action(action);
+        }
+        if play {
+            self.play_level(ctx);
         }
         if save {
             self.save_rom(ctx, false);
@@ -460,6 +491,12 @@ impl App {
 
     fn tools_menu(&mut self, ui: &mut egui::Ui) {
         ui.menu_button("Tools", |ui| {
+            let play =
+                egui::Button::new("Play Level").shortcut_text(ui.ctx().format_shortcut(&PLAY));
+            if ui.add_enabled(self.doc.is_some(), play).clicked() {
+                ui.close();
+                self.play_level(ui.ctx());
+            }
             if ui.button("IPS Patcher…").clicked() {
                 ui.close();
                 if let Some(doc) = &self.doc {
@@ -646,15 +683,30 @@ impl eframe::App for App {
         DockArea::new(&mut self.dock).show_inside(ui, &mut viewer);
         let actions = viewer.actions;
         let mut select = None;
+        let mut play_from = None;
         for action in actions {
             match action {
                 Action::Apply(command) => doc.apply(command, None),
                 Action::ApplyGrouped(command, group) => doc.apply(command, Some(group)),
                 Action::SelectLevel(level) => select = Some(level),
+                Action::PlayFrom(tile) => play_from = Some(tile),
             }
         }
         if let Some(level) = select {
             self.request(Pending::SelectLevel(level));
+        }
+        if let Some(tile) = play_from {
+            let entrance = self.doc.as_ref().and_then(|d| {
+                let vertical = d.session.as_ref().is_some_and(|s| s.level.vertical);
+                smw_play::entrance_for_tile(&d.rom, &d.layout, vertical, (tile.x, tile.y)).ok()
+            });
+            if let Some(entrance) = entrance {
+                // Small Mario's image fills the lower half of his 32-pixel
+                // box: start one tile up so he stands on the clicked tile.
+                let pixel =
+                    (tile.x.saturating_mul(16), tile.y.saturating_mul(16).saturating_sub(16));
+                self.play_level_at(&ctx, entrance, Some(pixel));
+            }
         }
     }
 }
