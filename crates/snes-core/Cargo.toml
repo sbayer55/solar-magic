@@ -1,0 +1,20 @@
+[package]
+name = "snes-core"
+description = "SNES machine: master clock, system bus, CPU registers, DMA/HDMA, cartridge, and the Console facade."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+
+[dependencies]
+w65c816.workspace = true
+snes-rom.workspace = true
+snes-ppu.workspace = true
+snes-apu.workspace = true
+bitflags.workspace = true
+thiserror.workspace = true
+
+[lints]
+workspace = true

@@ -122,6 +122,12 @@ impl Rom {
         &self.mapper
     }
 
+    /// The active address mapper, by value.
+    #[must_use]
+    pub const fn mapper_kind(&self) -> MapperKind {
+        self.mapper
+    }
+
     /// Translates a bus address to a file offset within this image.
     ///
     /// # Errors
