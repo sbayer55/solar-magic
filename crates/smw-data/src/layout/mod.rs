@@ -142,6 +142,90 @@ pub struct LevelLoader {
     pub ram_bg_tilemap_high: u32,
 }
 
+/// Where the game decides which level to load, and the RAM the editor
+/// pokes to send it into a level. `docs/formats/smw-launch-protocol.md`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaunchHooks {
+    /// First instruction after the level number (`$0E/$0F`) is final in
+    /// the level-entry routine (`CODE_05D8B7`): the launch breakpoint.
+    pub level_select_pc: SnesAddr,
+    /// Opcode bytes expected at `level_select_pc`; the launcher refuses to
+    /// launch when they are missing.
+    pub level_select_fingerprint: &'static [u8],
+    /// RAM the launcher reads and writes.
+    pub ram: LaunchRam,
+    /// Game mode values the launcher waits for and sets.
+    pub modes: GameModes,
+}
+
+/// RAM addresses (bank `$7E`, given as 16-bit offsets) used to launch a level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LaunchRam {
+    /// `GameMode` (`$0100`).
+    pub game_mode: u16,
+    /// `OverworldOverride` (`$0109`): nonzero makes the level-entry routine
+    /// skip the overworld position lookup.
+    pub overworld_override: u16,
+    /// Loader-side level number low/high bytes (`$0E`/`$0F`).
+    pub level_number: u16,
+    /// `LoadingLevelNumber` (`$17BB`).
+    pub loading_level_number: u16,
+    /// Lunar Magic's 16-bit copy of the level number (`$010B`).
+    pub level_number_copy: u16,
+    /// `TranslevelNo` (`$13BF`).
+    pub translevel: u16,
+    /// `OWPlayerSubmap` (`$1F11`): nonzero gives the level number's high byte.
+    pub player_submap: u16,
+    /// `SublevelCount` (`$141A`): zero means entering from the overworld.
+    pub sublevel_count: u16,
+    /// `UseSecondaryExit` (`$1B93`).
+    pub use_secondary_exit: u16,
+    /// `ExitTableLow` (`$19B8`), 32 per-screen exit numbers.
+    pub exit_table_low: u16,
+    /// `ExitTableHigh` (`$19D8`), 32 per-screen exit flags.
+    pub exit_table_high: u16,
+    /// `PlayerXPosNext` (`$94`), 16-bit; its high byte is the screen.
+    pub player_x: u16,
+    /// `PlayerYPosNext` (`$96`), 16-bit.
+    pub player_y: u16,
+    /// `MidwayFlag` (`$13CE`).
+    pub midway_flag: u16,
+    /// `Powerup` (`$19`).
+    pub powerup: u16,
+    /// `PlayerLives` (`$0DBE`), lives − 1.
+    pub lives: u16,
+    /// `PlayerCoins` (`$0DBF`).
+    pub coins: u16,
+    /// `PlayerItembox` (`$0DC2`).
+    pub item_box: u16,
+    /// `CarryYoshiThruLvls` (`$0DC1`): Yoshi colour carried into the level
+    /// (0 = none).
+    pub yoshi_carried: u16,
+    /// `PlayerRidingYoshi` (`$187A`).
+    pub riding_yoshi: u16,
+    /// `YoshiColor` (`$13C7`).
+    pub yoshi_color: u16,
+    /// `PlayerTurnOW` (`$0DD6`): current player × 4 (0 = Mario).
+    pub current_player: u16,
+    /// `OWLevelTileSettings` (`$1EA2`), 96 bytes indexed by translevel; bit 6
+    /// means "midway reached", which makes the entry routine use the midway
+    /// screen.
+    pub ow_level_tile_settings: u16,
+}
+
+/// Game mode values (`$0100`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GameModes {
+    /// Title screen waiting for input.
+    pub title: u8,
+    /// Overworld waiting for input.
+    pub overworld: u8,
+    /// Fade out before loading a level.
+    pub fade_to_level: u8,
+    /// Playing a level.
+    pub level: u8,
+}
+
 /// The player entrance position tables (`docs/formats/level-header.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntranceTables {
@@ -250,6 +334,9 @@ pub struct RomLayout {
 
     /// Player entrance position tables.
     pub entrance: EntranceTables,
+
+    /// How to send the running game into a level.
+    pub launch: LaunchHooks,
 
     /// First file offset of expanded space: everything from here up is free
     /// unless a RATS tag claims it. `docs/formats/rats.md`

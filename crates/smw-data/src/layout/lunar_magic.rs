@@ -7,7 +7,7 @@
 
 use snes_rom::{Rom, SnesAddr};
 
-use super::{LayoutKind, RomLayout, VANILLA};
+use super::{LaunchHooks, LayoutKind, RomLayout, VANILLA};
 use crate::LayoutError;
 
 /// Lunar Magic's added tables and routines.
@@ -60,6 +60,15 @@ pub const LM_25X: LunarMagicTables = LunarMagicTables {
     ],
     ram_level_flags: 0x7F_C00B,
 };
+
+/// Lunar Magic 2.5x rewrites the end of the level-entry routine: after its
+/// `JSL $05:DCD0` high-byte hook, `$05:D8BC` holds
+/// `REP #$30 / LDA $0E / STA $010B / ASL / CLC / ADC $0E / TAY`, so the
+/// level number is final there and the routine itself copies it to `$010B`.
+/// Verified against Quickie World 2 (LM 2.53), 2026-10-11.
+const LM_LEVEL_SELECT_PC: SnesAddr = SnesAddr::lit(0x05_D8BC);
+const LM_LEVEL_SELECT_FINGERPRINT: &[u8] =
+    &[0xC2, 0x30, 0xA5, 0x0E, 0x8D, 0x0B, 0x01, 0x0A, 0x18, 0x65, 0x0E, 0xA8];
 
 /// Opcode bytes that must be present for [`LM_25X`] to apply.
 struct Fingerprint {
@@ -124,6 +133,11 @@ pub(super) fn detect(rom: &Rom, signature: String) -> Result<RomLayout, LayoutEr
         sprite_banks: Some(LM_25X.sprite_banks),
         known_free: &[],
         lm: Some(LM_25X),
+        launch: LaunchHooks {
+            level_select_pc: LM_LEVEL_SELECT_PC,
+            level_select_fingerprint: LM_LEVEL_SELECT_FINGERPRINT,
+            ..VANILLA.launch
+        },
         ..VANILLA
     })
 }

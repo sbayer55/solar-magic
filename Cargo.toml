@@ -28,6 +28,7 @@ spc700 = { path = "crates/spc700" }
 snes-ppu = { path = "crates/snes-ppu" }
 snes-apu = { path = "crates/snes-apu" }
 snes-core = { path = "crates/snes-core" }
+smw-play = { path = "crates/smw-play" }
 # external
 anyhow = "1.0"
 bitflags = "2.13"

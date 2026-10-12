@@ -20,6 +20,7 @@ mod ips_apply;
 mod ips_create;
 mod ips_info;
 mod level_io;
+mod play;
 mod png;
 mod render;
 
@@ -255,6 +256,29 @@ enum Command {
         #[arg(long)]
         out: Option<PathBuf>,
     },
+    /// Boots the in-house emulator and plays straight into a level.
+    Play {
+        /// ROM file.
+        rom: PathBuf,
+        /// Level number (hex, e.g. `105`).
+        #[arg(value_parser = parse_hex_u16)]
+        level: u16,
+        /// Frames to run once the level is playing.
+        #[arg(long, default_value_t = 120)]
+        frames: u32,
+        /// Start at the midway entrance.
+        #[arg(long)]
+        midway: bool,
+        /// Enter through a secondary exit (hex).
+        #[arg(long, value_parser = parse_hex_u16)]
+        exit: Option<u16>,
+        /// Powerup: 0 small, 1 big, 2 cape, 3 fire.
+        #[arg(long, default_value_t = 0)]
+        powerup: u8,
+        /// Write the final picture as a PNG.
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
 }
 
 /// Parses a hexadecimal byte with or without a `0x` prefix.
@@ -273,6 +297,9 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::EmuBoot { rom, frames, trace, out } => {
             emu_boot::run(&rom, frames, trace, out.as_deref())
+        }
+        Command::Play { rom, level, frames, midway, exit, powerup, out } => {
+            play::run(&rom, out.as_deref(), play::Options { level, frames, midway, exit, powerup })
         }
         Command::Info { rom } => info::run(&rom),
         Command::DumpGfx { rom, out_dir, id, scale, row, exgfx } => {

@@ -36,6 +36,8 @@ pub struct Console {
     cpu: Cpu,
     bus: SystemBus,
     breakpoints: Vec<Addr>,
+    /// A breakpoint that was just reported; the next run steps over it.
+    resume_pc: Option<Addr>,
 }
 
 impl Console {
@@ -46,6 +48,7 @@ impl Console {
             cpu: Cpu::new(),
             bus: SystemBus::new(Cartridge::new(rom), region),
             breakpoints: Vec::new(),
+            resume_pc: None,
         };
         console.reset();
         console
@@ -57,6 +60,7 @@ impl Console {
         self.bus.reset();
         self.cpu = Cpu::new();
         self.cpu.reset(&mut self.bus);
+        self.resume_pc = None;
     }
 
     /// The processor.
@@ -97,16 +101,24 @@ impl Console {
         self.bus.overlays.clear();
     }
 
-    /// Stops a run before the instruction at `pc24` executes.
+    /// Breakpoints ignore bank bit 7, so code running from the FastROM
+    /// mirror (`$80+`) still stops at an address given for `$00+`.
+    const fn mirror_free(pc24: Addr) -> Addr {
+        pc24 & 0x7F_FFFF
+    }
+
+    /// Stops a run before the instruction at `pc24` (or its mirror) executes.
     pub fn add_breakpoint(&mut self, pc24: Addr) {
-        if !self.breakpoints.contains(&pc24) {
-            self.breakpoints.push(pc24);
+        let pc = Self::mirror_free(pc24);
+        if !self.breakpoints.contains(&pc) {
+            self.breakpoints.push(pc);
         }
     }
 
     /// Removes a breakpoint.
     pub fn remove_breakpoint(&mut self, pc24: Addr) {
-        self.breakpoints.retain(|&b| b != pc24);
+        let pc = Self::mirror_free(pc24);
+        self.breakpoints.retain(|&b| b != pc);
     }
 
     /// Reads a byte with no side effects (WRAM, cartridge; registers read as 0).
@@ -206,8 +218,14 @@ impl Console {
     ) -> RunReport {
         self.set_input(input);
         while keep_going(self) {
-            if !self.breakpoints.is_empty() && self.breakpoints.contains(&self.cpu.pc24()) {
-                return self.report(Some(Hit::Breakpoint(self.cpu.pc24())));
+            let pc = self.cpu.pc24();
+            let resuming = self.resume_pc.take() == Some(pc);
+            if !resuming
+                && !self.breakpoints.is_empty()
+                && self.breakpoints.contains(&Self::mirror_free(pc))
+            {
+                self.resume_pc = Some(pc);
+                return self.report(Some(Hit::Breakpoint(pc)));
             }
             if let Err(e) = self.step_instruction() {
                 return self.report(Some(Hit::Stopped(e)));

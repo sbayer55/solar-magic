@@ -10,10 +10,11 @@ level editor. This document is the map; the format details live in
 ```
 solar-magic (eframe GUI)          solar-cli (`solar`, PNG/dump/patch/emu tools)
         │         │                         │         │        │
-        │         └────────────┬────────────│─────────┘        │
-        │                      ▼            │                  ▼
-        │                     ips           │              snes-core   the machine: clock, bus,
-        └──────────────┬────────────────────┘                  │       DMA, cart, Console
+        │         └────────────┬────────────│─────────┘        ▼
+        │                      ▼            │              smw-play    launch a level, overlay edits
+        │                     ips           │                  ▼
+        └──────────────┬────────────────────┘              snes-core   the machine: clock, bus,
+                                                               │       DMA, cart, Console
                        ▼                              ┌────────┼────────┐
                   smw-render        Level → grid      ▼        ▼        ▼
                        │            → RGBA raster  snes-ppu  snes-apu  (snes-rom, w65c816)
@@ -43,8 +44,9 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 | `spc700` | done | Cycle-exact SPC700 core (`Spc700`, `ApuBus`, 256-entry table); passes all 256 SingleStepTests files with exact cycle sequences (`SPC700_TESTS_DIR`). |
 | `snes-apu` | SMP done, DSP pending | `Apu`/`Smp`: 64 KiB RAM, `$F0-$FF` registers, timers, CPU ports, exact master↔SPC clock ratio, boot ROM modelled at port level (`Ipl::Hle`) or supplied (`Ipl::Rom`); `DspRegs` storage. `docs/emulation/apu.md`. |
 | `snes-core` | boots SMW to the title screen | `Clock` (master cycles, lines, dots, events), `SystemBus` (speeds, open bus, routing, lazy catch-up), `CpuRegs` (NMI/IRQ, ALU, joypads), `Dma` (GPDMA/HDMA), `Cartridge` (ROM, SRAM, `Coprocessor` hook), `Console` facade (run frames, breakpoints, peek/poke, overlays). `docs/emulation/{timing,memory-map}.md`. |
+| `smw-play` | launches levels | `Launcher`: boots to the title screen, pokes player state and game mode, substitutes the level number at the entry routine's breakpoint, overlays unsaved edits (`docs/formats/smw-launch-protocol.md`). `MarioState`, `Entrance::{Main, Midway, SecondaryExit, Position}`. |
 | `smw-render` | viewer, LM 2.5x, ownership | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
-| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`, `emu-boot`. Also the test oracle. |
+| `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`, `emu-boot`, `play`. Also the test oracle. |
 | `solar-magic` | editor | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette. Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
 
 ## The vanilla / Lunar Magic seam

@@ -77,7 +77,7 @@ pub(crate) fn run(rom: &Path, frames: u32, trace: usize, out: Option<&Path>) -> 
 }
 
 /// Saves the current picture as a PNG.
-fn write_frame(console: &Console, path: &Path) -> anyhow::Result<()> {
+pub(crate) fn write_frame(console: &Console, path: &Path) -> anyhow::Result<()> {
     let frame = console.frame();
     let width = u32::try_from(snes_core::FRAME_WIDTH)?;
     let height = u32::try_from(frame.height)?;

@@ -3,8 +3,8 @@
 use snes_rom::SnesAddr;
 
 use super::{
-    EntranceTables, FreeRange, LayoutKind, LevelLoader, Map16Tables, PaletteTables, RomLayout,
-    SplitPointerTable,
+    EntranceTables, FreeRange, GameModes, LaunchHooks, LaunchRam, LayoutKind, LevelLoader,
+    Map16Tables, PaletteTables, RomLayout, SplitPointerTable,
 };
 
 /// The vanilla USA ROM layout.
@@ -73,6 +73,37 @@ pub const VANILLA: RomLayout = RomLayout {
         y_high: SnesAddr::lit(0x05_D740),
         x_low: SnesAddr::lit(0x05_D750),
         x_high: SnesAddr::lit(0x05_D758),
+    },
+    launch: LaunchHooks {
+        level_select_pc: SnesAddr::lit(0x05_D8B7),
+        // REP #$30 / LDA $0E / ASL / CLC / ADC $0E / TAY
+        level_select_fingerprint: &[0xC2, 0x30, 0xA5, 0x0E, 0x0A, 0x18, 0x65, 0x0E, 0xA8],
+        ram: LaunchRam {
+            game_mode: 0x0100,
+            overworld_override: 0x0109,
+            level_number: 0x000E,
+            loading_level_number: 0x17BB,
+            level_number_copy: 0x010B,
+            translevel: 0x13BF,
+            player_submap: 0x1F11,
+            sublevel_count: 0x141A,
+            use_secondary_exit: 0x1B93,
+            exit_table_low: 0x19B8,
+            exit_table_high: 0x19D8,
+            player_x: 0x0094,
+            player_y: 0x0096,
+            midway_flag: 0x13CE,
+            powerup: 0x0019,
+            lives: 0x0DBE,
+            coins: 0x0DBF,
+            item_box: 0x0DC2,
+            yoshi_carried: 0x0DC1,
+            riding_yoshi: 0x187A,
+            yoshi_color: 0x13C7,
+            current_player: 0x0DD6,
+            ow_level_tile_settings: 0x1EA2,
+        },
+        modes: GameModes { title: 0x07, overworld: 0x0E, fade_to_level: 0x0F, level: 0x14 },
     },
     expanded_start_pc: 0x08_0000,
     known_free: &VANILLA_FREE_RANGES,
