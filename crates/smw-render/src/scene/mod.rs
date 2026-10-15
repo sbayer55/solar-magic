@@ -1,7 +1,11 @@
 //! Composes a whole level picture: layers, background, sprite markers.
-//! Shared by the CLI and the editor.
+//! Shared by the CLI and the editor. With captured machine assets the
+//! picture is composed the way the PPU would (`machine.rs`).
+
+mod machine;
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use smw_data::gfx::{GfxError, GfxFile, GfxId};
 use smw_data::level::Level;
@@ -11,6 +15,7 @@ use smw_data::tileset::{LevelGfxSlots, level_gfx_slots};
 use smw_data::{LevelId, RomLayout};
 use snes_rom::Rom;
 
+use crate::assets::LevelAssets;
 use crate::level::{LoadError, LoadedLevel, TileGrid, load_level_data};
 use crate::map16_ext::{FIRST_EXT_TILE, FgPageResolver};
 use crate::{CharAtlas, Raster, Rect, TileContext, draw_map16_tile};
@@ -26,11 +31,22 @@ pub struct RenderOptions {
     pub sprites: bool,
     /// Tint every layer 1 tile by the object that owns it (debug view).
     pub owners: bool,
+    /// Draw layer 3 (machine view only).
+    pub layer3: bool,
+    /// Compose from the captured machine assets when the scene has them.
+    pub machine: bool,
 }
 
 impl Default for RenderOptions {
     fn default() -> Self {
-        Self { layer1: true, layer2: true, sprites: false, owners: false }
+        Self {
+            layer1: true,
+            layer2: true,
+            sprites: false,
+            owners: false,
+            layer3: true,
+            machine: true,
+        }
     }
 }
 
@@ -51,6 +67,10 @@ pub struct LevelScene {
     pub ext_tiles: HashMap<u16, Map16Tile>,
     /// Background Map16 set (the page set the level's layer 2 selects).
     pub bg_set: Map16Set,
+    /// What the machine showed for this level, when captured.
+    pub assets: Option<Arc<LevelAssets>>,
+    /// Characters from the captured VRAM (built with `assets`).
+    machine_atlas: Option<machine::MachineAtlas>,
 }
 
 /// Where to find a foreground tile's definition: pages 0–1 from the tileset
@@ -125,7 +145,36 @@ impl LevelScene {
             smw_data::level::Layer2::Objects { .. } => 0,
         };
         let bg_set = map16::load_bg_set(rom, layout, page_set)?;
-        Ok(Self { loaded, palette, gfx_slots, atlas, fg_set, ext_tiles, bg_set })
+        Ok(Self {
+            loaded,
+            palette,
+            gfx_slots,
+            atlas,
+            fg_set,
+            ext_tiles,
+            bg_set,
+            assets: None,
+            machine_atlas: None,
+        })
+    }
+
+    /// Attaches captured machine assets (or detaches them with `None`).
+    pub fn set_assets(&mut self, assets: Option<Arc<LevelAssets>>) {
+        self.machine_atlas = assets.as_deref().map(machine::MachineAtlas::new);
+        self.assets = assets;
+    }
+
+    /// [`LevelScene::set_assets`] by value.
+    #[must_use]
+    pub fn with_assets(mut self, assets: Arc<LevelAssets>) -> Self {
+        self.set_assets(Some(assets));
+        self
+    }
+
+    /// Whether [`LevelScene::render`] will use the machine assets.
+    #[must_use]
+    pub fn renders_from_machine(&self, options: RenderOptions) -> bool {
+        options.machine && self.assets.as_ref().is_some_and(|a| a.play.bg_mode == 1)
     }
 
     /// Picture size in pixels.
@@ -140,16 +189,11 @@ impl LevelScene {
     /// Draws the level at 1:1 scale.
     #[must_use]
     pub fn render(&self, options: RenderOptions) -> Raster {
-        let (w, h) = self.pixel_size();
-        let backdrop = self.palette.get(0, 0).unwrap_or_default().to_rgba8();
-        let mut raster = Raster::filled(w, h, backdrop);
-        let ctx = TileContext { atlas: &self.atlas, palette: &self.palette, opaque_zero: false };
-        if options.layer2 {
-            self.draw_layer2(&mut raster, ctx);
-        }
-        if options.layer1 {
-            draw_grid(&mut raster, &self.loaded.layer1, self.map16(), ctx);
-        }
+        let mut raster = if self.renders_from_machine(options) {
+            self.render_machine(options)
+        } else {
+            self.render_plain(options)
+        };
         if options.owners {
             self.tint_owners(&mut raster);
         }
@@ -159,6 +203,22 @@ impl LevelScene {
                 &self.loaded.level.sprites.sprites,
                 self.loaded.vertical,
             );
+        }
+        raster
+    }
+
+    /// Today's picture: layer 2 under layer 1 from the GFX files and the
+    /// ROM palette, priority ignored.
+    fn render_plain(&self, options: RenderOptions) -> Raster {
+        let (w, h) = self.pixel_size();
+        let backdrop = self.palette.get(0, 0).unwrap_or_default().to_rgba8();
+        let mut raster = Raster::filled(w, h, backdrop);
+        let ctx = TileContext { atlas: &self.atlas, palette: &self.palette, opaque_zero: false };
+        if options.layer2 {
+            self.draw_layer2(&mut raster, ctx);
+        }
+        if options.layer1 {
+            draw_grid(&mut raster, &self.loaded.layer1, self.map16(), ctx);
         }
         raster
     }

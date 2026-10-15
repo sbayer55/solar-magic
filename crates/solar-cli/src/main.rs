@@ -8,6 +8,7 @@
 mod bg_rle;
 mod capture;
 mod diff_rom;
+mod diff_view;
 mod dump_exits;
 mod dump_gfx;
 mod dump_level;
@@ -265,6 +266,25 @@ enum Command {
         /// Tint every layer 1 tile by the object that owns it.
         #[arg(long)]
         owners: bool,
+        /// Launch the level in the emulator first and compose the picture
+        /// from its VRAM, palette, layer 3 and registers.
+        #[arg(long)]
+        machine: bool,
+        /// With `--machine`: leave layer 3 out.
+        #[arg(long)]
+        no_layer3: bool,
+    },
+    /// Compare the machine-composed picture against the emulator's own
+    /// frame (sprites hidden) and report differing pixels.
+    DiffView {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Level number in hex (000-1FF).
+        #[arg(value_parser = parse_hex_u16)]
+        level: u16,
+        /// Write the frame window of our picture with differing pixels marked red.
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     /// Expand a ROM to a larger power-of-two size, fix its checksum and write
     /// the result to a new file.
@@ -465,9 +485,12 @@ fn main() -> ExitCode {
                 trace::Options { target, ram, steps, gap, m8, x8, unknown_only, dump, stop, copy };
             trace::run(&rom, &opts)
         }
-        Command::Render { rom, level, out, layers, scale, sprites, owners } => {
-            render::run(&rom, &out, render::Options { level, layers, scale, sprites, owners })
+        Command::Render { rom, level, out, layers, scale, sprites, owners, machine, no_layer3 } => {
+            let options =
+                render::Options { level, layers, scale, sprites, owners, machine, no_layer3 };
+            render::run(&rom, &out, options)
         }
+        Command::DiffView { rom, level, out } => diff_view::run(&rom, level, out.as_deref()),
         Command::DumpOwners { rom, level } => dump_owners::run(&rom, level),
         Command::Expand { rom, out, size } => expand::run(&rom, &out, size),
         Command::FreeSpace { rom, bank, min_len } => {

@@ -2,8 +2,12 @@
 
 use std::path::Path;
 
+use std::sync::Arc;
+
 use anyhow::Context as _;
+use smw_data::level::Level;
 use smw_data::{LevelId, RomLayout};
+use smw_play::{BootCache, CaptureOptions, capture_level};
 use smw_render::scene::{LevelScene, RenderOptions};
 use snes_rom::Rom;
 
@@ -33,6 +37,10 @@ pub(crate) struct Options {
     pub(crate) sprites: bool,
     /// Tint layer 1 tiles by owning object.
     pub(crate) owners: bool,
+    /// Capture the level from the emulator and compose from its assets.
+    pub(crate) machine: bool,
+    /// Leave layer 3 out of the machine picture.
+    pub(crate) no_layer3: bool,
 }
 
 /// Renders the level and writes `out`.
@@ -41,12 +49,21 @@ pub(crate) fn run(rom_path: &Path, out: &Path, options: Options) -> anyhow::Resu
     let layout = RomLayout::detect(&rom)?;
     let id = LevelId::new(options.level)
         .with_context(|| format!("level {:#X} is out of range", options.level))?;
-    let scene = LevelScene::load(&rom, &layout, id)?;
+    let mut scene = LevelScene::load(&rom, &layout, id)?;
+    if options.machine {
+        let level = Level::load(&rom, &layout, id)?;
+        let mut cache = BootCache::new();
+        let assets = capture_level(&mut cache, &rom, &layout, level, CaptureOptions::default())
+            .with_context(|| format!("capturing level {id}"))?;
+        scene.set_assets(Some(Arc::new(assets)));
+    }
     let render_options = RenderOptions {
         layer1: matches!(options.layers, Layers::One | Layers::All),
         layer2: matches!(options.layers, Layers::Two | Layers::All),
         sprites: options.sprites,
         owners: options.owners,
+        layer3: !options.no_layer3,
+        machine: options.machine,
     };
     let raster = scene.render(render_options);
     save_png(&raster.scaled(options.scale.max(1)), out)?;

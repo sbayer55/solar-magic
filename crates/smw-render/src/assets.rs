@@ -152,6 +152,69 @@ impl fmt::Debug for LevelAssets {
     }
 }
 
+/// Where the machine's frame sits inside the level picture: the level pixel
+/// at the frame's top-left corner.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FrameOrigin {
+    /// Level pixel x of frame column 0.
+    pub x: u32,
+    /// Level pixel y of frame line 0.
+    pub y: u32,
+}
+
+/// The PPU shows tilemap row `vofs + line + 1` on frame line `line`
+/// (`docs/emulation/ppu.md`), so frame line 0 is level row `vofs + 1`.
+/// Verified 2026-10-14: level 105's play area matches pixel for pixel.
+pub const LINE_OFFSET: u32 = 1;
+
+/// Where the captured frame sits in the level picture (from BG1's play-area
+/// scroll) and which frame rows show the level (below the status bar IRQ).
+#[must_use]
+pub fn frame_window(assets: &LevelAssets) -> (FrameOrigin, core::ops::Range<u32>) {
+    let cam = assets.play.bg[0];
+    let origin =
+        FrameOrigin { x: u32::from(cam.hofs), y: u32::from(cam.vofs).saturating_add(LINE_OFFSET) };
+    let rows = u32::from(assets.play.irq_line).saturating_add(1)..assets.frame_no_obj.height;
+    (origin, rows)
+}
+
+/// The result of [`diff_frame`].
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct FrameDiff {
+    /// Differing pixels in the compared rows.
+    pub count: usize,
+    /// The first few differing pixels, as frame coordinates.
+    pub first: Vec<(u32, u32)>,
+}
+
+/// Compares `frame` (within `rows`) against the level `raster` at `origin`,
+/// keeping at most `limit` differing coordinates.
+#[must_use]
+pub fn diff_frame(
+    raster: &crate::Raster,
+    frame: &CapturedFrame,
+    origin: FrameOrigin,
+    rows: core::ops::Range<u32>,
+    limit: usize,
+) -> FrameDiff {
+    let mut count = 0usize;
+    let mut first = Vec::new();
+    for fy in rows {
+        for fx in 0..frame.width {
+            let i = usize::try_from(fy.saturating_mul(frame.width).saturating_add(fx)).unwrap_or(0);
+            let want = frame.rgba.get(i.saturating_mul(4)..i.saturating_mul(4).saturating_add(4));
+            let got = raster.get(origin.x.saturating_add(fx), origin.y.saturating_add(fy));
+            if want != got.as_ref().map(<[u8; 4]>::as_slice) {
+                count = count.saturating_add(1);
+                if first.len() < limit {
+                    first.push((fx, fy));
+                }
+            }
+        }
+    }
+    FrameDiff { count, first }
+}
+
 /// Decodes `count` characters of `bpp` starting at VRAM word `base`.
 /// Characters past the end of VRAM come out empty.
 #[must_use]

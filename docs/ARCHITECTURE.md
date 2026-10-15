@@ -46,7 +46,7 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 | `snes-sa1` | unit-tested only | `Sa1`: second `w65c816::Cpu` over its own bus with I-RAM, BW-RAM (linear, windowed, bitmap), Super MMC, programmable vectors, interrupts both ways, H/V timer, DMA and character conversion, arithmetic unit, bit reader; behind `snes-core`'s `Coprocessor` trait. No SA-1 ROM available locally. `docs/emulation/sa1.md`. |
 | `snes-core` | boots SMW to the title screen | `Clock` (master cycles, lines, dots, events), `SystemBus` (speeds, open bus, routing, lazy catch-up), `CpuRegs` (NMI/IRQ, ALU, joypads), `Dma` (GPDMA/HDMA), `Cartridge` (ROM, SRAM, `Coprocessor` hook), `Console` facade (run frames, breakpoints, peek/poke, overlays). `docs/emulation/{timing,memory-map}.md`. |
 | `smw-play` | launches levels | `Launcher`: boots to the title screen, pokes player state and game mode, substitutes the level number at the entry routine's breakpoint, overlays unsaved edits (`docs/formats/smw-launch-protocol.md`). `MarioState`, `Entrance::{Main, Midway, SecondaryExit, Position}`. |
-| `smw-render` | viewer, LM 2.5x, ownership, tracing | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays and an optional access `Trace`) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `scene::LevelScene` composes layers, background and sprite markers for both the CLI and the GUI. |
+| `smw-render` | viewer, LM 2.5x, ownership, tracing, machine picture | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays and an optional access `Trace`) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `assets::LevelAssets` (plain data captured from the emulator), `plane`/`compose` (index planes and the PPU's mode 1 compositing); `scene::LevelScene` composes layers, background, layer 3 and sprite markers for both the CLI and the GUI. |
 | `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `trace`, `diff-rom`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `mwl-export`, `mwl-import`, `mwl-info`, `export-all`, `import-all`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`, `emu-boot`, `emu-bench`, `play`. Also the test oracle. |
 | `solar-magic` | editor + play | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette, a Play panel (Tools → Play Level, Ctrl+T; right-click a tile → Play from here) that runs the edited level in the in-house emulator on its own thread with keyboard or gamepad input and sound (cpal, paced on the audio queue), save/load state, a rewind ring (10 s) and `<rom>.srm` battery saves, and a Debug panel (registers, disassembly with click-to-break, breakpoints, watches, memory page, instruction trace, single-step). Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
 
@@ -121,10 +121,16 @@ reverse-engineering loop is: save a before/after ROM pair in Lunar Magic,
 ```
 Rom ─RomLayout─▶ Level{headers, objects, layer2, sprites}
                  ─w65c816 runs object routines─▶ TileGrid (L1), TileGrid (L2)
-Map16 + GfxFiles + Palette ─▶ TileAtlas (8x8 → RGBA per palette row, cached)
-TileGrid × TileAtlas ─▶ Raster per layer ─▶ composite ─▶ PNG / egui texture
-Sprites ─▶ overlay
+plain:   Map16 + GfxFiles + Palette ─▶ CharAtlas ─▶ Raster (L2 under L1) ─▶ PNG / egui texture
+machine: smw-play launches the level ─▶ LevelAssets {VRAM chars, CGRAM, BG3 map, PPU regs}
+         TileGrid × captured chars ─▶ IndexPlane per layer ─▶ compose (mode 1 order,
+         TM/TS, colour math) ─▶ Raster
+Sprites ─▶ markers
 ```
+
+`docs/formats/level-view.md` describes both pictures. The machine picture
+is checked against the emulator's own frame pixel for pixel
+(`solar diff-view`, `smw-play/tests/view_oracle.rs`).
 
 Why run the game's code instead of hand-porting object routines: there are
 roughly 0x40 standard, 0x100 extended, and many tileset-specific objects, and

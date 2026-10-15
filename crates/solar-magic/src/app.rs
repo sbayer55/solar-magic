@@ -54,7 +54,7 @@ pub(crate) struct ViewState {
 impl Default for ViewState {
     fn default() -> Self {
         Self {
-            options: RenderOptions { layer1: true, layer2: true, sprites: true, owners: false },
+            options: RenderOptions { sprites: true, ..RenderOptions::default() },
             filter: String::new(),
             show_screen_grid: true,
             show_tile_grid: false,

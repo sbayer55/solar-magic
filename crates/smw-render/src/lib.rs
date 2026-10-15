@@ -6,10 +6,12 @@
 
 pub mod assets;
 mod atlas;
+pub mod compose;
 pub mod emu;
 pub mod level;
 pub mod map16_ext;
 pub mod ownership;
+pub mod plane;
 mod raster;
 pub mod scene;
 pub mod sprites;
