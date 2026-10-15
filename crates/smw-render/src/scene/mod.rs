@@ -2,6 +2,7 @@
 //! Shared by the CLI and the editor. With captured machine assets the
 //! picture is composed the way the PPU would (`machine.rs`).
 
+mod cache;
 mod machine;
 
 use std::collections::HashMap;
@@ -10,8 +11,8 @@ use std::sync::Arc;
 use smw_data::gfx::{GfxError, GfxFile, GfxId};
 use smw_data::level::Level;
 use smw_data::map16::{self, Map16Set, Map16Tile};
-use smw_data::palette::{Palette, level_palette};
-use smw_data::tileset::{LevelGfxSlots, level_gfx_slots};
+use smw_data::palette::Palette;
+use smw_data::tileset::LevelGfxSlots;
 use smw_data::{LevelId, RomLayout};
 use snes_rom::Rom;
 
@@ -19,6 +20,8 @@ use crate::assets::LevelAssets;
 use crate::level::{LoadError, LoadedLevel, TileGrid, load_level_data};
 use crate::map16_ext::{FIRST_EXT_TILE, FgPageResolver};
 use crate::{CharAtlas, Raster, Rect, TileContext, draw_map16_tile};
+
+pub use cache::{SceneCache, SceneKey, SceneShared};
 
 /// What to include in the picture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,30 +135,50 @@ impl LevelScene {
     ///
     /// See [`SceneError`].
     pub fn from_level(rom: &Rom, layout: &RomLayout, level: Level) -> Result<Self, SceneError> {
-        let id = level.id;
+        let shared = SceneShared::build(rom, layout, &level)?;
+        Self::assemble(rom, layout, level, shared, None)
+    }
+
+    /// [`LevelScene::from_level`] reusing `cache` for the parts the level's
+    /// key still matches (palette, GFX, Map16 sets, machine assets); the
+    /// loader and the extension tiles always run again.
+    ///
+    /// # Errors
+    ///
+    /// See [`SceneError`].
+    pub fn from_level_cached(
+        rom: &Rom,
+        layout: &RomLayout,
+        level: Level,
+        cache: &mut SceneCache,
+    ) -> Result<Self, SceneError> {
+        let shared = cache.shared_for(rom, layout, &level)?;
+        let assets = cache.assets_for(&shared.key);
+        Self::assemble(rom, layout, level, SceneShared::clone(&shared), assets)
+    }
+
+    fn assemble(
+        rom: &Rom,
+        layout: &RomLayout,
+        level: Level,
+        shared: SceneShared,
+        assets: Option<Arc<LevelAssets>>,
+    ) -> Result<Self, SceneError> {
         let loaded = load_level_data(rom, layout, level)?;
-        let header = &loaded.level.header;
-        let palette = level_palette(rom, layout, &loaded.level)?;
-        let gfx_slots = level_gfx_slots(rom, layout, id, *header)?;
-        let atlas = load_slot_atlas(rom, layout, &gfx_slots)?;
-        let fg_set = map16::load_fg(rom, layout, header.tileset())?;
         let ext_tiles = resolve_ext_tiles(rom, layout, &loaded)?;
-        let page_set = match loaded.level.layer2 {
-            smw_data::level::Layer2::Background { page_set, .. } => page_set,
-            smw_data::level::Layer2::Objects { .. } => 0,
-        };
-        let bg_set = map16::load_bg_set(rom, layout, page_set)?;
-        Ok(Self {
+        let mut scene = Self {
             loaded,
-            palette,
-            gfx_slots,
-            atlas,
-            fg_set,
+            palette: shared.palette,
+            gfx_slots: shared.gfx_slots,
+            atlas: shared.atlas,
+            fg_set: shared.fg_set,
             ext_tiles,
-            bg_set,
+            bg_set: shared.bg_set,
             assets: None,
             machine_atlas: None,
-        })
+        };
+        scene.set_assets(assets);
+        Ok(scene)
     }
 
     /// Attaches captured machine assets (or detaches them with `None`).

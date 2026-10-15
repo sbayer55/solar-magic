@@ -21,6 +21,7 @@ impl Viewer<'_> {
     #[allow(clippy::arithmetic_side_effects, reason = "egui geometry math")]
     pub(super) fn level_view(&mut self, ui: &mut egui::Ui) {
         let doc = &mut *self.doc;
+        let view_label = doc.view_label(self.view.options);
         let scene = match &doc.scene {
             Ok(scene) => scene,
             Err(err) => {
@@ -39,7 +40,7 @@ impl Viewer<'_> {
             ui.data_mut(|d| d.get_persisted::<egui::Rect>(rect_id)).unwrap_or(egui::Rect::ZERO);
         let mut hovered: Option<TilePos> = None;
         let mut actions: Vec<Action> = Vec::new();
-        status_bar(ui, &doc.status);
+        status_bar(ui, &view_label, &doc.status);
         egui::Scene::new()
             .zoom_range(0.25..=8.0)
             .drag_pan_buttons(DragPanButtons::MIDDLE | DragPanButtons::SECONDARY)
@@ -120,8 +121,8 @@ fn play_from_menu(
     });
 }
 
-/// The hover text and the document's last message.
-fn status_bar(ui: &mut egui::Ui, message: &str) {
+/// The hover text, what the picture shows, and the document's last message.
+fn status_bar(ui: &mut egui::Ui, view_label: &str, message: &str) {
     egui::Panel::bottom("status").show(ui, |ui| {
         let status =
             ui.data(|d| d.get_temp::<String>(egui::Id::new("status_text"))).unwrap_or_default();
@@ -131,6 +132,8 @@ fn status_bar(ui: &mut egui::Ui, message: &str) {
             } else {
                 status
             });
+            ui.separator();
+            ui.weak(view_label);
             if !message.is_empty() {
                 ui.separator();
                 ui.colored_label(egui::Color32::LIGHT_YELLOW, message);

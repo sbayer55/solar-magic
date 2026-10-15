@@ -67,6 +67,28 @@ level pixel (`BG1 hofs`, `BG1 vofs + 1`): the PPU shows tilemap row
 2026-10-14: levels 105, 001, 0C5, 0E8 and 101 match with **0 differing
 pixels**; the oracle test covers them and skips levels with HDMA active.
 
+## In the editor
+
+The GUI shows the machine picture by default (View → "Machine-exact
+view"; "Layer 3" beside it). A capture runs on its own thread
+(`solar-magic/src/capture.rs`, `CaptureSession`), cloning a console the
+document booted once (`BootCache` behind a mutex, forgotten when the ROM is
+replaced by Save). The level view's status bar says "capturing machine
+view… Ns" meanwhile and "machine view" once the assets are in; the plain
+picture is shown until then, so editing never waits for the emulator.
+
+What triggers a capture is the level's `SceneKey`
+(`smw-render/src/scene/cache.rs`): the two headers, the layer 2 page set
+and Lunar Magic's per-level records. Moving, adding or deleting objects,
+sprites and exits never recaptures; the scene is rebuilt from the cached
+palette, GFX, Map16 sets and assets (`LevelScene::from_level_cached`), and
+only the loader runs again. Changing a header field (tileset, palettes,
+mode, scroll, entrance, screens) starts one new capture; one runs at a
+time, and a result for a key the level has since moved away from is
+dropped and the capture repeated. A capture that fails (a level the
+emulator cannot fade in, a mode other than 1) is remembered for its key
+and the status bar shows why the plain picture is used.
+
 ## Still approximate
 
 Sprites are drawn as markers (their characters are captured, `sprite_chars`,
