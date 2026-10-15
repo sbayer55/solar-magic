@@ -147,6 +147,10 @@ pub struct LevelLoader {
     pub ram_bg_tilemap_low: u32,
     /// Decoded background tilemap high bytes (`$7E:BD00`, 0x400 bytes).
     pub ram_bg_tilemap_high: u32,
+    /// The 512-word Map16 pointer table `CODE_0581FB` builds (`$7E:0FBE`):
+    /// one bank-`$0D` offset per tile, swapped for the animated tiles
+    /// 0x133–0x13A every few frames. `docs/formats/map16.md`
+    pub ram_map16_pointers: u32,
 }
 
 /// Where the game decides which level to load, and the RAM the editor

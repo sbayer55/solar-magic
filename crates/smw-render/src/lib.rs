@@ -4,6 +4,7 @@
 //! [`Raster`] is a plain `width × height` array of RGBA8 pixels that the CLI
 //! writes as PNG and the editor uploads as a texture.
 
+pub mod assets;
 mod atlas;
 pub mod emu;
 pub mod level;

@@ -6,6 +6,7 @@
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
 mod bg_rle;
+mod capture;
 mod diff_rom;
 mod dump_exits;
 mod dump_gfx;
@@ -222,6 +223,19 @@ enum Command {
         /// Directory of `.mwl` files.
         dir: PathBuf,
     },
+    /// Launch a level in the emulator and dump what the editor's picture
+    /// takes from it: frames (with and without sprites), VRAM, CGRAM, OAM,
+    /// tile RAM and the PPU registers.
+    Capture {
+        /// Path to the `.sfc` / `.smc` file.
+        rom: PathBuf,
+        /// Level number in hex (000-1FF).
+        #[arg(value_parser = parse_hex_u16)]
+        level: u16,
+        /// Output directory (created if missing).
+        #[arg(long)]
+        out: PathBuf,
+    },
     /// Print secondary exits (all non-blank ones, or a single one).
     DumpExits {
         /// Path to the `.sfc` / `.smc` file.
@@ -437,6 +451,7 @@ fn main() -> ExitCode {
         Command::RelocateLevel { rom, out, level } => level_io::relocate(&rom, &out, level),
         Command::CopyLevel { rom, out, src, dst } => level_io::copy(&rom, &out, src, dst),
         Command::DumpExits { rom, exit } => dump_exits::run(&rom, exit),
+        Command::Capture { rom, level, out } => capture::run(&rom, level, &out),
         Command::MwlExport { rom, level, out } => mwl::export(&rom, level, &out),
         Command::MwlImport { rom, out, file, level } => mwl::import(&rom, &out, &file, level),
         Command::MwlInfo { file } => mwl::info(&file),
