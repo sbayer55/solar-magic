@@ -48,7 +48,7 @@ Dependencies only point downward. Nothing below `solar-magic` knows about egui.
 | `smw-play` | launches levels | `Launcher`: boots to the title screen, pokes player state and game mode, substitutes the level number at the entry routine's breakpoint, overlays unsaved edits (`docs/formats/smw-launch-protocol.md`). `MarioState`, `Entrance::{Main, Midway, SecondaryExit, Position}`. |
 | `smw-render` | viewer, LM 2.5x, ownership, tracing, machine picture | `Raster`, `CharAtlas`, tile drawing; `emu::SnesBus` (with overlays and an optional access `Trace`) + `level::load_level_data` run the game's loader on a `Level` value and read back `TileGrid`s; `ownership::AttributedBus` records which object stamped each tile; `map16_ext` resolves Lunar Magic pages 2+; `assets::LevelAssets` (plain data captured from the emulator), `plane`/`compose` (index planes and the PPU's mode 1 compositing); `scene::LevelScene` composes layers, background, layer 3 and sprite markers for both the CLI and the GUI. |
 | `solar-cli` | one subcommand per milestone | `info`, `dump-gfx`, `dump-map16`, `dump-level [--json]`, `dump-exits`, `dump-owners`, `render`, `trace`, `diff-rom`, `expand`, `free-space`, `rats`, `relocate-level`, `copy-level`, `apply-level`, `mwl-export`, `mwl-import`, `mwl-info`, `export-all`, `import-all`, `bg-rle`, `gfx-check`, `ips-apply`, `ips-create`, `ips-info`, `emu-boot`, `emu-bench`, `play`. Also the test oracle. |
-| `solar-magic` | editor + play | eframe app with egui_dock panels: level list, zoomable level view with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette, a Play panel (Tools → Play Level, Ctrl+T; right-click a tile → Play from here) that runs the edited level in the in-house emulator on its own thread with keyboard or gamepad input and sound (cpal, paced on the audio queue), save/load state, a rewind ring (10 s) and `<rom>.srm` battery saves, and a Debug panel (registers, disassembly with click-to-break, breakpoints, watches, memory page, instruction trace, single-step). Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
+| `solar-magic` | editor + play | eframe app with egui_dock panels: level list, zoomable level view (machine-exact picture captured on a worker thread, `capture.rs`; plain picture meanwhile) with selection/drag/placement and overlays, Edit/Header/Exits panels, info, Map16 sheet, palette, a Play panel (Tools → Play Level, Ctrl+T; right-click a tile → Play from here) that runs the edited level in the in-house emulator on its own thread with keyboard or gamepad input and sound (cpal, paced on the audio queue), save/load state, a rewind ring (10 s) and `<rom>.srm` battery saves, and a Debug panel (registers, disassembly with click-to-break, breakpoints, watches, memory page, instruction trace, single-step). Undo/redo, clipboard, Save / Save As. Tools → IPS Patcher window. Remembers the last ROM and level. |
 
 ## The vanilla / Lunar Magic seam
 
@@ -94,6 +94,13 @@ Secondary exits are ROM-global, so the session keeps the edited ones beside
 the level (`EditSession::exits`); every command snapshots both, so they share
 the level's undo stack and are written on Save.
 
+After every command the `Document` rebuilds its `LevelScene` through a
+`SceneCache`: the palette, GFX, Map16 sets and the machine assets are reused
+while the level's `SceneKey` (headers, layer 2 page set, Lunar Magic records)
+is unchanged, so only the loader runs again for an object or sprite edit. A
+key change drops the assets and a `CaptureSession` thread captures them anew
+from a `BootCache` the document shares between captures.
+
 ## Reverse-engineering tooling
 
 `SnesBus::enable_trace` records every ROM byte read, WRAM byte written, WRAM
@@ -128,9 +135,10 @@ machine: smw-play launches the level ─▶ LevelAssets {VRAM chars, CGRAM, BG3 
 Sprites ─▶ markers
 ```
 
-`docs/formats/level-view.md` describes both pictures. The machine picture
-is checked against the emulator's own frame pixel for pixel
-(`solar diff-view`, `smw-play/tests/view_oracle.rs`).
+`docs/formats/level-view.md` describes both pictures and how the GUI
+captures on a worker thread. The machine picture is checked against the
+emulator's own frame pixel for pixel (`solar diff-view`,
+`smw-play/tests/view_oracle.rs`).
 
 Why run the game's code instead of hand-porting object routines: there are
 roughly 0x40 standard, 0x100 extended, and many tileset-specific objects, and

@@ -1,13 +1,17 @@
 //! The open ROM, the level being edited, and the rendered scene.
 
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use anyhow::Context as _;
 use smw_data::level::{EditError, Level, SaveOptions, SaveReport, save_level};
 use smw_data::{LevelId, RomLayout};
-use smw_render::scene::{LevelScene, RenderOptions};
+use smw_play::BootCache;
+use smw_render::scene::{LevelScene, RenderOptions, SceneCache, SceneKey};
 use snes_rom::Rom;
 
+use crate::capture::{CaptureJob, CaptureSession};
 use crate::edit::{EditCommand, EditSession};
 
 /// An open ROM with one level loaded for editing.
@@ -34,6 +38,14 @@ pub(crate) struct Document {
     pub(crate) status: String,
     /// The level running in the emulator, if started.
     pub(crate) play: Option<crate::play::PlaySession>,
+    /// Scene parts and machine assets reused across edits.
+    pub(crate) cache: SceneCache,
+    /// The capture in flight, if any.
+    pub(crate) capture: Option<CaptureSession>,
+    /// Why the last capture for `capture_failed.0` produced nothing.
+    capture_failed: Option<(SceneKey, String)>,
+    /// The booted console captures clone (forgotten when the ROM changes).
+    boot_cache: Arc<Mutex<BootCache>>,
 }
 
 impl std::fmt::Debug for Document {
@@ -66,6 +78,10 @@ impl Document {
             rendered_with: None,
             status: String::new(),
             play: None,
+            cache: SceneCache::new(),
+            capture: None,
+            capture_failed: None,
+            boot_cache: Arc::new(Mutex::new(BootCache::new())),
         };
         doc.select(level);
         Ok(doc)
@@ -116,14 +132,97 @@ impl Document {
         self.rebuild_scene();
     }
 
-    /// Re-runs the loader on the edited level and drops stale textures.
+    /// Re-runs the loader on the edited level and drops stale textures. The
+    /// palette, graphics, Map16 sets and machine assets are reused while
+    /// the level's [`SceneKey`] is unchanged.
     pub(crate) fn rebuild_scene(&mut self) {
         if let Some(session) = &self.session {
-            self.scene = LevelScene::from_level(&self.rom, &self.layout, session.level.clone())
-                .map_err(|e| e.to_string());
+            self.scene = LevelScene::from_level_cached(
+                &self.rom,
+                &self.layout,
+                session.level.clone(),
+                &mut self.cache,
+            )
+            .map_err(|e| e.to_string());
         }
         self.texture = None;
         self.rendered_with = None;
+    }
+
+    /// The key of the level as edited.
+    fn scene_key(&self) -> Option<SceneKey> {
+        self.session.as_ref().map(|s| SceneKey::of(&s.level))
+    }
+
+    /// Collects a finished capture, then starts one when the machine view
+    /// wants assets the scene lacks. One capture runs at a time; a result
+    /// for a key the level has moved away from is dropped.
+    pub(crate) fn poll_capture(&mut self, ctx: &egui::Context, machine: bool) {
+        if let Some(outcome) = self.capture.as_mut().and_then(CaptureSession::try_take) {
+            let key = self.capture.take().map(|c| c.key().clone());
+            match (outcome, key) {
+                (Ok(assets), Some(key)) => {
+                    self.cache.set_assets(key.clone(), Arc::clone(&assets));
+                    if self.scene_key() == Some(key)
+                        && let Ok(scene) = self.scene.as_mut()
+                    {
+                        scene.set_assets(Some(assets));
+                        self.texture = None;
+                    }
+                }
+                (Err(err), Some(key)) => {
+                    self.status = format!("machine view unavailable: {err}");
+                    self.capture_failed = Some((key, err));
+                }
+                (_, None) => {}
+            }
+        }
+        if self.capture.is_some() {
+            ctx.request_repaint_after(Duration::from_secs(1));
+        } else if machine {
+            self.start_capture(ctx);
+        }
+    }
+
+    /// Starts a capture for the edited level unless the scene already has
+    /// assets or the same key failed before.
+    fn start_capture(&mut self, ctx: &egui::Context) {
+        let (Ok(scene), Some(session)) = (&self.scene, &self.session) else {
+            return;
+        };
+        if scene.assets.is_some() {
+            return;
+        }
+        let key = SceneKey::of(&session.level);
+        if self.capture_failed.as_ref().is_some_and(|(failed, _)| *failed == key) {
+            return;
+        }
+        let job = CaptureJob {
+            rom: self.rom.clone(),
+            layout: self.layout.clone(),
+            level: session.level.clone(),
+            key,
+            boot: Arc::clone(&self.boot_cache),
+        };
+        self.capture = Some(CaptureSession::start(ctx, job));
+    }
+
+    /// What the level view is showing, for the status bar.
+    pub(crate) fn view_label(&self, options: RenderOptions) -> String {
+        if !options.machine {
+            return "plain view".to_owned();
+        }
+        if let Some(capture) = &self.capture {
+            return format!("capturing machine view… {}s", capture.elapsed().as_secs());
+        }
+        match &self.scene {
+            Ok(scene) if scene.renders_from_machine(options) => "machine view".to_owned(),
+            Ok(scene) if scene.assets.is_some() => "plain view (unsupported mode)".to_owned(),
+            _ => match &self.capture_failed {
+                Some((_, err)) => format!("plain view ({err})"),
+                None => "plain view".to_owned(),
+            },
+        }
     }
 
     /// Whether the session has unsaved edits.
@@ -214,6 +313,9 @@ impl Document {
         rom.save(path).with_context(|| format!("writing {}", path.display()))?;
         self.rom = rom;
         path.clone_into(&mut self.path);
+        if let Ok(mut boot) = self.boot_cache.lock() {
+            boot.invalidate();
+        }
         if let Some(session) = self.session.as_mut() {
             session.history.mark_saved();
             // Refresh the addresses the level was loaded from.
@@ -342,5 +444,33 @@ mod tests {
             reopened.scene.as_ref().unwrap().render(smw_render::scene::RenderOptions::default());
         assert_eq!(rendered, in_app);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Moving an object keeps the cached palette, graphics and Map16 sets;
+    /// changing the tileset rebuilds them.
+    #[test]
+    fn object_edits_reuse_the_scene_cache() {
+        let Some(path) = std::env::var_os("SMW_ROM") else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let id = LevelId::new(0x105).unwrap();
+        let mut doc = Document::open(std::path::Path::new(&path), id).unwrap();
+        let shared = std::sync::Arc::clone(doc.cache.shared().unwrap());
+        doc.apply(
+            EditCommand::MoveObjects { layer: Layer::One, indices: vec![0], delta: (1, 0) },
+            None,
+        );
+        assert!(doc.is_dirty(), "{}", doc.status);
+        assert!(std::sync::Arc::ptr_eq(&shared, doc.cache.shared().unwrap()));
+        doc.apply(
+            EditCommand::SetHeaderField {
+                field: smw_data::level::fields::primary::TILESET,
+                value: 3,
+            },
+            None,
+        );
+        assert!(!std::sync::Arc::ptr_eq(&shared, doc.cache.shared().unwrap()));
+        assert_eq!(doc.cache.key().map(|k| k.header.tileset()), Some(3));
     }
 }

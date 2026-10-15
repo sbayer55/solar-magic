@@ -463,6 +463,14 @@ impl App {
             ui.checkbox(&mut self.view.options.sprites, "Sprite markers");
             ui.checkbox(&mut self.view.options.owners, "Tint by object");
             ui.separator();
+            ui.checkbox(&mut self.view.options.machine, "Machine-exact view").on_hover_text(
+                "Characters, palette, layer 3 and priorities as the game shows them",
+            );
+            ui.add_enabled(
+                self.view.options.machine,
+                egui::Checkbox::new(&mut self.view.options.layer3, "Layer 3"),
+            );
+            ui.separator();
             ui.checkbox(&mut self.view.show_screen_grid, "Screen boundaries");
             ui.checkbox(&mut self.view.show_tile_grid, "Tile grid");
             ui.checkbox(&mut self.view.show_exits, "Screen exits");
@@ -677,6 +685,7 @@ impl eframe::App for App {
             self.welcome(ui);
             return;
         };
+        doc.poll_capture(&ctx, self.view.options.machine);
         doc.ensure_texture(&ctx, self.view.options);
         doc.ensure_map16_texture(&ctx);
         let mut viewer = Viewer { doc, view: &mut self.view, actions: Vec::new() };
