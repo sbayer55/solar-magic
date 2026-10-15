@@ -46,6 +46,9 @@ fn level_105_plays_from_its_main_entrance() {
     assert!(console.frame().to_rgba().chunks(4).any(|p| p != [0, 0, 0, 0xFF]));
 }
 
+/// A level-shape predicate for `representative_levels`.
+type Shape = fn(&Level) -> bool;
+
 /// Levels worth checking against the machine: fixed anchors plus the first
 /// level of each shape (vertical, layer 2 objects, background, layer 3).
 #[allow(clippy::expect_used, reason = "test harness")]
@@ -53,7 +56,6 @@ fn representative_levels(rom: &Rom, layout: &RomLayout) -> Vec<LevelId> {
     let anchors = [0x105u16, 0x001, 0x0C5, 0x0E8, 0x1F4];
     let mut picked: Vec<LevelId> =
         anchors.iter().map(|&n| LevelId::new(n).expect("valid")).collect();
-    type Shape = fn(&Level) -> bool;
     let predicates: [Shape; 4] = [
         |l| l.vertical,
         |l| matches!(l.layer2, Layer2::Objects { .. }),
