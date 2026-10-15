@@ -65,8 +65,11 @@ two 16×27 screens at stride `0x1B0`, repeating horizontally
 
 ## Not yet handled
 
-- Layer 2 tile priority bits (layer 2 tiles with priority draw above layer 1).
-- Layer 3, HDMA gradients, animated tiles, sprites (M6).
+Tile priority, layer 3, animated tiles and the exact palette are handled
+by the machine picture (`level-view.md`); the plain picture still ignores
+them.
+
+- HDMA gradients, window effects, sprites' graphics (markers only).
 - Lunar Magic: the patched loader runs as is (verified on Quickie World 1/2,
   2026-10-06); Map16 pages 2+ and ExGFX are resolved outside the loader
   (`lunar-magic-ext.md`). SA-1 / ExLoROM ROMs are still rejected.

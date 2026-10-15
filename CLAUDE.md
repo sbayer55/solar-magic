@@ -28,6 +28,8 @@ cargo solar trace "roms/Super Mario World (USA).sfc" level:105 | 04:DC57 [--ram 
 cargo solar diff-rom <before.sfc> <after.sfc> [--gap 4] [--markers] [--limit N]
 cargo solar mwl-export <rom> <level> <out.mwl> | mwl-import <rom> <out.sfc> <in.mwl> [--level N] | mwl-info <in.mwl> | export-all <rom> <dir> | import-all <rom> <out> <dir>
 cargo solar capture "roms/Super Mario World (USA).sfc" 105 --out <dir>   # frames, VRAM, CGRAM, OAM, tile RAM, PPU regs from the emulator
+cargo solar render "roms/Super Mario World (USA).sfc" 105 <out.png> --machine [--no-layer3]   # the machine-exact picture
+cargo solar diff-view "roms/Super Mario World (USA).sfc" 105 [--out diff.png]   # pixel oracle vs the emulator's frame
 SMW_FULL_ORACLE=1 SMW_ROM=... cargo test -p smw-play --test launch tile_ram   # all 512 levels against the machine
 cargo solar ips-apply <patch.ips> <target> <out> [--header keep|add|strip] [--log]
 cargo solar ips-create <original> <modified> <out.ips> [--log]

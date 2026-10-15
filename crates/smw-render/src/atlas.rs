@@ -64,6 +64,17 @@ impl CharAtlas {
         Self::from_slots([Some(&files[0]), Some(&files[1]), Some(&files[2]), Some(&files[3])])
     }
 
+    /// An atlas holding `chars` in order (at most [`CHAR_COUNT`]), the rest
+    /// empty: how characters captured from the machine's VRAM are used.
+    #[must_use]
+    pub fn from_chars(chars: &[Tile8Pixels]) -> Self {
+        let mut atlas = Self::new();
+        for (slot, chr) in atlas.chars.iter_mut().zip(chars) {
+            *slot = *chr;
+        }
+        atlas
+    }
+
     /// Like [`CharAtlas::from_layer_files`], leaving `None` slots empty.
     #[must_use]
     pub fn from_slots(files: [Option<&GfxFile>; 4]) -> Self {
