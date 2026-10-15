@@ -339,7 +339,11 @@ impl Worker {
             }
             m.refresh = false;
             match frames.try_send(m.event(&self.layout, pacer.fps)) {
-                Ok(()) | Err(TrySendError::Full(_)) => {}
+                Ok(()) => {}
+                // A running machine just sends the next frame; a paused one
+                // keeps trying so the frame after a step or a pause (which
+                // carries the debugger snapshot) is never lost.
+                Err(TrySendError::Full(_)) => m.refresh = !ran,
                 Err(TrySendError::Disconnected(_)) => return,
             }
             self.ctx.request_repaint();
@@ -353,7 +357,11 @@ impl Worker {
                 m.running = true;
                 m.stop = None;
             }
-            Command::Pause => m.running = false,
+            Command::Pause => {
+                m.running = false;
+                // One more frame, now carrying a debugger snapshot.
+                m.refresh = true;
+            }
             Command::Step(n) => {
                 m.running = false;
                 m.steps_left = n;
@@ -480,6 +488,13 @@ impl Machine {
 
     fn event(&self, layout: &RomLayout, fps: f32) -> FrameEvent {
         let frame = self.console.frame();
+        // Disassembling and peeking every frame is only useful when someone
+        // is looking; a paused machine always gets a snapshot.
+        let debug = if self.debug.wanted || !self.running {
+            DebugSnapshot::capture(&self.console, &self.debug, &self.trace, self.stop)
+        } else {
+            DebugSnapshot::default()
+        };
         FrameEvent {
             rgba: Arc::from(frame.to_rgba()),
             width: frame.width(),
@@ -489,7 +504,7 @@ impl Machine {
             game_mode: smw_play::game_mode(&self.console, layout),
             player: smw_play::player_position(&self.console, layout),
             fps,
-            debug: DebugSnapshot::capture(&self.console, &self.debug, &self.trace, self.stop),
+            debug,
         }
     }
 }
@@ -531,6 +546,13 @@ mod tests {
         assert_eq!(frame.game_mode, 0x14);
         assert_eq!((frame.width, frame.height), (256, 224));
         assert!(frame.rgba.chunks(4).any(|p| p != [0, 0, 0, 0xFF]));
+        // Paced on the audio queue (or the clock), the thread must sustain
+        // the console's frame rate: the counter covers the last second.
+        std::thread::sleep(Duration::from_secs(3));
+        session.poll(&ctx);
+        let fps = session.latest.as_ref().map_or(0.0, |f| f.fps);
+        eprintln!("play session: {fps:.1} fps");
+        assert!(fps > 55.0, "the emulator thread fell behind: {fps:.1} fps");
         session.send(Command::Pause);
     }
 }

@@ -80,7 +80,7 @@ impl Viewer<'_> {
 fn gfx_rows(scene: &smw_render::scene::LevelScene) -> Vec<(&'static str, String)> {
     let name =
         |id: Option<smw_data::gfx::GfxId>| id.map_or_else(|| "-".to_owned(), |i| i.to_string());
-    let slots = &scene.gfx_slots;
+    let slots = &scene.assets.gfx_slots;
     let mut rows = vec![(
         "GFX FG1/FG2/BG1/FG3",
         format!(

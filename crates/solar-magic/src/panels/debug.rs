@@ -15,6 +15,10 @@ impl Viewer<'_> {
             return;
         };
         play.poll(ui.ctx());
+        if !play.debug.wanted {
+            play.debug.wanted = true;
+            play.send_debug_config();
+        }
         controls(ui, play);
         let Some(snapshot) = play.latest.as_ref().map(|f| f.debug.clone()) else {
             ui.spinner();
@@ -232,6 +236,17 @@ mod tests {
             });
         });
         output.textures_delta.clear();
+        // Drawing the panel asked the thread for snapshots; the next frame carries one.
+        let snapshot_due = Instant::now().checked_add(Duration::from_secs(5)).expect("deadline");
+        loop {
+            let session = doc.play.as_mut().expect("session");
+            session.poll(&ctx);
+            if session.latest.as_ref().is_some_and(|f| !f.debug.watches.is_empty()) {
+                break;
+            }
+            assert!(Instant::now() < snapshot_due, "no snapshot with the watch arrived");
+            std::thread::sleep(Duration::from_millis(20));
+        }
         let debug = &doc.play.as_ref().expect("session").latest.as_ref().expect("frame").debug;
         assert_eq!(debug.disasm.len(), 10);
         assert_eq!(debug.memory.len(), 256);

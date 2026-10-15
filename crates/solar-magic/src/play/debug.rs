@@ -16,6 +16,9 @@ pub(crate) const MEMORY_LEN: usize = 256;
 /// What the panel wants captured.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct DebugConfig {
+    /// Whether the Debug panel is open, so snapshots are worth capturing
+    /// while running (paused frames always carry one).
+    pub(crate) wanted: bool,
     /// Addresses whose bytes are shown every frame.
     pub(crate) watches: Vec<u32>,
     /// First address of the memory page.

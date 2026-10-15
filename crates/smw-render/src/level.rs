@@ -174,7 +174,8 @@ pub struct TracedLoad {
     pub loaded: LoadedLevel,
     /// Every access the loader made (empty when tracing was off).
     pub trace: Trace,
-    /// WRAM after the loader ran (`$7E:0000` is index 0).
+    /// WRAM after the loader ran (`$7E:0000` is index 0; empty when tracing
+    /// was off).
     pub wram: Vec<u8>,
 }
 
@@ -212,7 +213,7 @@ fn load_level_with(
     cpu.brk_is_fatal = true;
     cpu.call_long(&mut bus, loader.entry.get(), SENTINEL, STEP_BUDGET)?;
     let trace = bus.inner_mut().take_trace().unwrap_or_default();
-    let wram = bus.inner().wram().to_vec();
+    let wram = if record { bus.inner().wram().to_vec() } else { Vec::new() };
 
     let screens = usize::from(level.header.screens());
     let mode = level.header.level_mode().get();
