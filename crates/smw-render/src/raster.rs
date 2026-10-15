@@ -65,7 +65,31 @@ impl Raster {
     /// The pixels flattened to `R G B A` bytes, as image encoders want them.
     #[must_use]
     pub fn to_rgba_bytes(&self) -> Vec<u8> {
-        self.pixels.iter().flatten().copied().collect()
+        self.pixels.as_flattened().to_vec()
+    }
+
+    /// A copy of the pixels inside `rect`, clipped to the raster.
+    #[must_use]
+    pub fn crop(&self, rect: Rect) -> Self {
+        let x1 = rect.x.saturating_add(rect.w).min(self.width);
+        let y1 = rect.y.saturating_add(rect.h).min(self.height);
+        let (w, h) = (x1.saturating_sub(rect.x), y1.saturating_sub(rect.y));
+        let mut out = Self::new(w, h);
+        for (row, yy) in (rect.y..y1).enumerate() {
+            let Some(src) = self.index(rect.x, yy).and_then(|i| {
+                self.pixels.get(i..i.saturating_add(usize::try_from(w).unwrap_or(0)))
+            }) else {
+                continue;
+            };
+            let Some(dst) = out
+                .index(0, u32::try_from(row).unwrap_or(u32::MAX))
+                .and_then(|i| out.pixels.get_mut(i..i.saturating_add(src.len())))
+            else {
+                continue;
+            };
+            dst.copy_from_slice(src);
+        }
+        out
     }
 
     fn index(&self, x: u32, y: u32) -> Option<usize> {
@@ -159,6 +183,19 @@ mod tests {
         assert_eq!(r.get(4, 0), None);
         assert_eq!(r.pixels().len(), 12);
         assert_eq!(r.to_rgba_bytes().len(), 48);
+    }
+
+    #[test]
+    fn cropping_clips() {
+        let mut r = Raster::new(4, 3);
+        r.put(2, 1, [1, 2, 3, 4]);
+        r.put(3, 2, [5, 6, 7, 8]);
+        let c = r.crop(super::Rect { x: 2, y: 1, w: 5, h: 5 });
+        assert_eq!((c.width(), c.height()), (2, 2));
+        assert_eq!(c.get(0, 0), Some([1, 2, 3, 4]));
+        assert_eq!(c.get(1, 1), Some([5, 6, 7, 8]));
+        assert_eq!(c.get(1, 0), Some([0, 0, 0, 0]));
+        assert_eq!(r.crop(super::Rect { x: 9, y: 9, w: 1, h: 1 }).pixels().len(), 0);
     }
 
     #[test]

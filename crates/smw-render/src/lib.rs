@@ -12,6 +12,8 @@ pub mod map16_ext;
 pub mod ownership;
 mod raster;
 pub mod scene;
+pub mod scene_assets;
+pub mod scene_patch;
 pub mod sprites;
 mod tiles;
 

@@ -682,6 +682,13 @@ impl eframe::App for App {
         let mut viewer = Viewer { doc, view: &mut self.view, actions: Vec::new() };
         DockArea::new(&mut self.dock).show_inside(ui, &mut viewer);
         let actions = viewer.actions;
+        if let Some(play) = doc.play.as_mut()
+            && play.debug.wanted
+            && self.dock.find_tab(&Tab::Debug).is_none()
+        {
+            play.debug.wanted = false;
+            play.send_debug_config();
+        }
         let mut select = None;
         let mut play_from = None;
         for action in actions {

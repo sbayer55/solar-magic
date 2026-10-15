@@ -126,3 +126,47 @@ multiple_crate_versions = "allow" # egui's dep tree duplicates; audited via carg
 cargo_common_metadata = "allow"   # until crates are published
 struct_excessive_bools = "allow"  # SMW header flags are genuinely many bools
 redundant_pub_crate = "allow"     # conflicts with rustc `unreachable_pub`, which we prefer
+
+# ---------------------------------------------------------------------------
+# Build profiles. The emulator, the level loader and the renderer are far too
+# slow at opt-level 0 (the Play panel ran at ~17 fps and a drag step took over
+# a second), so the hot crates are optimized even in `cargo run` / `cargo test`.
+# The GUI and CLI crates keep opt-level 0 for fast incremental builds. The
+# `"*"` wildcard covers external dependencies only; workspace members must be
+# named. Debug assertions and overflow checks stay on.
+# ---------------------------------------------------------------------------
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.dev.package.w65c816]
+opt-level = 3
+
+[profile.dev.package.spc700]
+opt-level = 3
+
+[profile.dev.package.snes-ppu]
+opt-level = 3
+
+[profile.dev.package.snes-apu]
+opt-level = 3
+
+[profile.dev.package.snes-sa1]
+opt-level = 3
+
+[profile.dev.package.snes-core]
+opt-level = 3
+
+[profile.dev.package.smw-play]
+opt-level = 3
+
+[profile.dev.package.smw-render]
+opt-level = 3
+
+[profile.dev.package.smw-data]
+opt-level = 3
+
+[profile.dev.package.lc-lz2]
+opt-level = 3
+
+[profile.dev.package.snes-rom]
+opt-level = 3

@@ -121,17 +121,39 @@ reverse-engineering loop is: save a before/after ROM pair in Lunar Magic,
 ```
 Rom ─RomLayout─▶ Level{headers, objects, layer2, sprites}
                  ─w65c816 runs object routines─▶ TileGrid (L1), TileGrid (L2)
-Map16 + GfxFiles + Palette ─▶ TileAtlas (8x8 → RGBA per palette row, cached)
-TileGrid × TileAtlas ─▶ Raster per layer ─▶ composite ─▶ PNG / egui texture
-Sprites ─▶ overlay
+Map16 + GfxFiles + Palette ─▶ SceneAssets (CharAtlas, palette, Map16 sets;
+                               shared across edits while the headers match)
+TileGrid × SceneAssets ─▶ Raster (layer 2, layer 1, owner tint, sprite markers)
+                       ─▶ PNG / egui texture (edits repaint only the dirty tiles)
 ```
 
 Why run the game's code instead of hand-porting object routines: there are
 roughly 0x40 standard, 0x100 extended, and many tileset-specific objects, and
 Lunar Magic patches some of them. Executing the ROM's own routines in a tiny
 65c816 interpreter against fake WRAM gives bit-exact results for every level
-and every patched ROM. Running one object at a time and diffing the grid also
-records which object owns each tile, which the editor needs for selection.
+and every patched ROM. Tagging every tile-RAM write with the object whose
+bytes the loader last fetched (`ownership::AttributedBus`) records which
+object owns each tile in the same pass, which the editor needs for selection.
+
+An edit rebuilds the `LevelScene` through `LevelScene::from_level_reusing`:
+the loader runs again, but the `SceneAssets` (palette, GFX atlas, Map16
+sets, keyed by level id, header bytes and layer 2 page set) are shared with
+the previous scene, and `scene_patch::dirty_between` reduces the two scenes
+to the tile rectangle that changed, which `render_region` repaints into the
+kept raster and the GUI uploads with `TextureHandle::set_partial`. Sprite
+markers are part of that rectangle; a header change or the owner tint falls
+back to a full redraw.
+
+## Build profiles
+
+The emulator, the loader and the renderer are unusable at opt-level 0: the
+Play panel ran at about 17 fps and a drag step took over a second. The
+workspace `Cargo.toml` therefore sets `opt-level = 3` in the dev profile for
+every external dependency and for the hot workspace crates (`w65c816`,
+`spc700`, `snes-*`, `smw-*`, `lc-lz2`), so `cargo run -p solar-magic` and
+`cargo test` get an optimized machine while `solar-magic`, `solar-cli` and
+`xtask` keep fast incremental builds. Debug assertions and overflow checks
+stay on in that profile; `--release` remains the fastest build.
 
 ## Code quality gates
 

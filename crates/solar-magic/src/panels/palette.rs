@@ -15,6 +15,7 @@ impl Viewer<'_> {
         for row in 0..16u8 {
             for col in 0..16u8 {
                 let [r, g, b, _] = scene
+                    .assets
                     .palette
                     .get(usize::from(row), usize::from(col))
                     .unwrap_or_default()

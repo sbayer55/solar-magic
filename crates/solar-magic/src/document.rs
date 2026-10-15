@@ -1,11 +1,14 @@
 //! The open ROM, the level being edited, and the rendered scene.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::Context as _;
 use smw_data::level::{EditError, Level, SaveOptions, SaveReport, save_level};
 use smw_data::{LevelId, RomLayout};
-use smw_render::scene::{LevelScene, RenderOptions};
+use smw_render::Raster;
+use smw_render::scene::{LevelScene, RenderOptions, pixel_rect};
+use smw_render::scene_patch::{Dirty, dirty_between};
 use snes_rom::Rom;
 
 use crate::edit::{EditCommand, EditSession};
@@ -24,8 +27,12 @@ pub(crate) struct Document {
     pub(crate) session: Option<EditSession>,
     /// The rendered level, or the error that prevented loading it.
     pub(crate) scene: Result<LevelScene, String>,
-    /// Level texture (recreated when the scene or options change).
+    /// Level texture, updated in place when the scene changes.
     pub(crate) texture: Option<egui::TextureHandle>,
+    /// The pixels `texture` holds, so an edit can repaint just its tiles.
+    raster: Option<Raster>,
+    /// What changed in `scene` since `texture` was last drawn.
+    dirty: Dirty,
     /// Map16 sheet texture for the level's tileset.
     pub(crate) map16_texture: Option<egui::TextureHandle>,
     /// Options the current texture was rendered with.
@@ -62,6 +69,8 @@ impl Document {
             session: None,
             scene: Err(String::new()),
             texture: None,
+            raster: None,
+            dirty: Dirty::All,
             map16_texture: None,
             rendered_with: None,
             status: String::new(),
@@ -114,16 +123,41 @@ impl Document {
         };
         self.map16_texture = None;
         self.rebuild_scene();
+        self.dirty = Dirty::All;
     }
 
-    /// Re-runs the loader on the edited level and drops stale textures.
+    /// Re-runs the loader on the edited level, sharing the palette, graphics
+    /// and Map16 sets with the previous scene when the headers still match,
+    /// and notes which tiles the texture must repaint.
     pub(crate) fn rebuild_scene(&mut self) {
-        if let Some(session) = &self.session {
-            self.scene = LevelScene::from_level(&self.rom, &self.layout, session.level.clone())
-                .map_err(|e| e.to_string());
+        let Some(session) = &self.session else {
+            self.texture = None;
+            self.raster = None;
+            self.dirty = Dirty::All;
+            return;
+        };
+        let old = self.scene.as_ref().ok();
+        let built =
+            LevelScene::from_level_reusing(&self.rom, &self.layout, session.level.clone(), old);
+        match built {
+            Ok(new) => {
+                let dirty = match (old, self.rendered_with) {
+                    (Some(old), Some(options)) => dirty_between(old, &new, options),
+                    _ => Dirty::All,
+                };
+                if !old.is_some_and(|o| Arc::ptr_eq(&o.assets, &new.assets)) {
+                    self.map16_texture = None;
+                }
+                self.dirty = self.dirty.union(dirty);
+                self.scene = Ok(new);
+            }
+            Err(err) => {
+                self.scene = Err(err.to_string());
+                self.texture = None;
+                self.raster = None;
+                self.dirty = Dirty::All;
+            }
         }
-        self.texture = None;
-        self.rendered_with = None;
     }
 
     /// Whether the session has unsaved edits.
@@ -159,7 +193,6 @@ impl Document {
                     session.selection.objects =
                         ranks.iter().filter_map(|&r| stream.index_of_rank(r)).collect();
                 }
-                self.map16_texture = None;
                 self.rebuild_scene();
             }
             Err(err) => self.status = describe(err),
@@ -229,17 +262,47 @@ impl Document {
         self.select(self.level);
     }
 
-    /// Makes sure the level texture matches `options`.
+    /// Makes sure the level texture shows the scene with `options`: a full
+    /// redraw when the options changed or everything is dirty, otherwise
+    /// only the dirty tiles are repainted and uploaded.
     pub(crate) fn ensure_texture(&mut self, ctx: &egui::Context, options: RenderOptions) {
-        if self.texture.is_some() && self.rendered_with == Some(options) {
-            return;
-        }
         let Ok(scene) = &self.scene else {
             return;
         };
-        let raster = scene.render(options);
-        self.texture = Some(upload(ctx, "level", &raster));
-        self.rendered_with = Some(options);
+        let partial = self.rendered_with == Some(options)
+            && self.dirty != Dirty::All
+            && self.texture.is_some()
+            && self.raster.is_some();
+        if !partial {
+            let raster = scene.render(options);
+            let image = color_image(&raster);
+            match self.texture.as_mut() {
+                Some(texture) if texture.size() == image.size => {
+                    texture.set(image, egui::TextureOptions::NEAREST);
+                }
+                _ => {
+                    self.texture =
+                        Some(ctx.load_texture("level", image, egui::TextureOptions::NEAREST));
+                }
+            }
+            self.raster = Some(raster);
+            self.rendered_with = Some(options);
+        } else if let Dirty::Rect(rect) = self.dirty
+            && let (Some(raster), Some(texture)) = (self.raster.as_mut(), self.texture.as_mut())
+        {
+            scene.render_region(raster, options, rect);
+            let pixels = pixel_rect(rect);
+            let patch = raster.crop(pixels);
+            let pos = [to_usize(pixels.x), to_usize(pixels.y)];
+            texture.set_partial(pos, color_image(&patch), egui::TextureOptions::NEAREST);
+        }
+        self.dirty = Dirty::Nothing;
+    }
+
+    /// The texture's pixels (what the level view shows).
+    #[cfg(test)]
+    pub(crate) const fn raster(&self) -> Option<&Raster> {
+        self.raster.as_ref()
     }
 
     /// Makes sure the Map16 sheet texture exists.
@@ -250,14 +313,15 @@ impl Document {
         let Ok(scene) = &self.scene else {
             return;
         };
-        let backdrop = scene.palette.get(0, 0).unwrap_or_default().to_rgba8();
-        let mut raster = smw_render::Raster::filled(16 * 16, 32 * 16, backdrop);
+        let assets = &*scene.assets;
+        let backdrop = assets.palette.get(0, 0).unwrap_or_default().to_rgba8();
+        let mut raster = Raster::filled(16 * 16, 32 * 16, backdrop);
         let tile_ctx = smw_render::TileContext {
-            atlas: &scene.atlas,
-            palette: &scene.palette,
+            atlas: &assets.atlas,
+            palette: &assets.palette,
             opaque_zero: false,
         };
-        for (n, tile) in scene.fg_set.tiles().iter().enumerate() {
+        for (n, tile) in assets.fg_set.tiles().iter().enumerate() {
             let n = u32::try_from(n).unwrap_or(0);
             smw_render::draw_map16_tile(
                 &mut raster,
@@ -275,13 +339,19 @@ fn describe(err: EditError) -> String {
 }
 
 /// Uploads a raster as a nearest-filtered texture.
-fn upload(ctx: &egui::Context, name: &str, raster: &smw_render::Raster) -> egui::TextureHandle {
-    let size = [
-        usize::try_from(raster.width()).unwrap_or(0),
-        usize::try_from(raster.height()).unwrap_or(0),
-    ];
-    let image = egui::ColorImage::from_rgba_unmultiplied(size, &raster.to_rgba_bytes());
-    ctx.load_texture(name, image, egui::TextureOptions::NEAREST)
+fn upload(ctx: &egui::Context, name: &str, raster: &Raster) -> egui::TextureHandle {
+    ctx.load_texture(name, color_image(raster), egui::TextureOptions::NEAREST)
+}
+
+/// The raster as an egui image. Both passes run in optimized crates (this
+/// one is built at opt-level 0 in the dev profile).
+fn color_image(raster: &Raster) -> egui::ColorImage {
+    let size = [to_usize(raster.width()), to_usize(raster.height())];
+    egui::ColorImage::from_rgba_unmultiplied(size, &raster.to_rgba_bytes())
+}
+
+fn to_usize(v: u32) -> usize {
+    usize::try_from(v).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -342,5 +412,65 @@ mod tests {
             reopened.scene.as_ref().unwrap().render(smw_render::scene::RenderOptions::default());
         assert_eq!(rendered, in_app);
         std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    /// Dragging objects and sprites keeps the scene assets and the texture,
+    /// repaints only the tiles that changed, and the picture stays exact.
+    #[test]
+    fn real_rom_drag_updates_the_texture_in_place() {
+        let Some(path) = std::env::var_os("SMW_ROM") else {
+            eprintln!("SMW_ROM not set; skipping real-ROM test");
+            return;
+        };
+        let ctx = egui::Context::default();
+        // A headless context assumes a small GPU; the level is 5120 px wide.
+        let raw = egui::RawInput { max_texture_side: Some(1 << 14), ..egui::RawInput::default() };
+        ctx.run_ui(raw, |_| {}).textures_delta.clear();
+        let options = crate::app::ViewState::default().options;
+        let id = LevelId::new(0x105).unwrap();
+        let mut doc = Document::open(std::path::Path::new(&path), id).unwrap();
+        doc.ensure_texture(&ctx, options);
+        let texture = doc.texture.as_ref().unwrap().id();
+        let assets = std::sync::Arc::clone(&doc.scene.as_ref().unwrap().assets);
+        let session = doc.session.as_ref().unwrap();
+        let object =
+            session.level.layer1.objects.iter().position(|o| o.position(false).is_some()).unwrap();
+        let steps = 20;
+        let started = std::time::Instant::now();
+        let mut painting = std::time::Duration::ZERO;
+        for step in 0..steps {
+            let delta = if step % 2 == 0 { (1, 0) } else { (0, 1) };
+            doc.apply(
+                EditCommand::MoveObjects { layer: Layer::One, indices: vec![object], delta },
+                Some(1),
+            );
+            doc.apply(EditCommand::MoveSprites { indices: vec![0], delta }, Some(1));
+            let paint = std::time::Instant::now();
+            doc.ensure_texture(&ctx, options);
+            painting += paint.elapsed();
+        }
+        let per_step = started.elapsed() / steps;
+        let bounds = doc.scene.as_ref().unwrap().loaded.ownership.bounds1[object].unwrap();
+        eprintln!(
+            "drag step (object {bounds:?} + sprite): {per_step:?}, of which repainting {:?}",
+            painting / steps
+        );
+        assert!(doc.is_dirty(), "{}", doc.status);
+        let scene = doc.scene.as_ref().unwrap();
+        assert!(std::sync::Arc::ptr_eq(&assets, &scene.assets), "assets were rebuilt");
+        assert_eq!(doc.texture.as_ref().unwrap().id(), texture, "texture was recreated");
+        assert_eq!(doc.raster().unwrap(), &scene.render(options), "patched picture drifted");
+        assert!(per_step < std::time::Duration::from_millis(250), "step took {per_step:?}");
+
+        doc.undo();
+        doc.ensure_texture(&ctx, options);
+        let undone = doc.scene.as_ref().unwrap();
+        assert_eq!(doc.raster().unwrap(), &undone.render(options), "undo left a stale picture");
+        assert_eq!(doc.texture.as_ref().unwrap().id(), texture);
+        // Take the texture uploads (and the frees from dropping the document)
+        // off the context; nothing applies them here.
+        drop(doc);
+        let mut output = ctx.run_ui(egui::RawInput::default(), |_| {});
+        output.textures_delta.clear();
     }
 }
