@@ -87,6 +87,24 @@ in the level view) picks the entrance table entries nearest to the tile
 (`smw_play::entrance_for_tile`), so it is accurate to the tables' grid, not
 to the pixel.
 
+## Boot cache and capture
+
+Booting to the title screen costs several hundred frames and depends only
+on the ROM, so `smw_play::BootCache` boots once (`boot_to_title`) and hands
+out `Console` clones; `Launcher::start_booted` is `start` without the reset
+(the boot phase then ends on its first step). `capture_level` uses it to
+launch a level and snapshot what the editor's picture takes from the
+machine (`docs/formats/level-view.md`): it waits until the game mode is the
+level's, `INIDISP` brightness is 15 and forced blank is off for two
+consecutive frames (the fade-in; budget 300 frames; the "No Yoshi" intro is
+disabled through the overlaid secondary header), then, at a frame start,
+copies VRAM, CGRAM, OAM, tile RAM, the animated-tile pointers and the PPU
+registers, renders one frame with and one without sprites from that exact
+state (a console clone with the PPU layer mask), and samples the registers
+again once the raster passes the status-bar IRQ line (`VTIME`) for the
+play-area scroll values. Verified 2026-10-14 on levels 105 and 001
+(`solar capture`).
+
 ## Exact start position
 
 `LaunchRequest::pixel` places the player at an exact level-pixel position:

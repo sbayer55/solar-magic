@@ -4,10 +4,14 @@
 //! and wait for play. Unsaved edits reach the game through bus overlays, as
 //! in the viewer. `docs/formats/smw-launch-protocol.md`.
 
+mod boot;
+mod capture;
 mod launcher;
 mod overlays;
 mod state;
 
+pub use boot::{BootCache, boot_to_title};
+pub use capture::{CaptureError, CaptureOptions, capture_level};
 pub use launcher::{LaunchError, Launcher, Phase};
 pub use state::{Entrance, LaunchRequest, MarioState, Player, Powerup, entrance_for_tile};
 

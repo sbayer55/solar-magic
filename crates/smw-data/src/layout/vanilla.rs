@@ -67,6 +67,7 @@ pub const VANILLA: RomLayout = RomLayout {
         ram_level_number_copy: 0x00_010B,
         ram_bg_tilemap_low: 0x7E_B900,
         ram_bg_tilemap_high: 0x7E_BD00,
+        ram_map16_pointers: 0x00_0FBE,
     },
     entrance: EntranceTables {
         y_low: SnesAddr::lit(0x05_D730),

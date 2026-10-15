@@ -368,6 +368,30 @@ fn read_cells<T: Copy + Default>(
     Ok(Grid { width, height, cells })
 }
 
+/// Byte offset into tile RAM (`$7E:C800` / `$7F:C800`) of a layer's cell.
+///
+/// For vanilla-height levels: horizontal screens are 16×27 blocks laid out
+/// left to right (layer 2 objects after the 32 layer 1 screens), vertical
+/// screens are 32×16 as two 16×16 halves laid out top to bottom. Vertical
+/// layer 2 objects are not laid out this way.
+#[must_use]
+pub fn tile_ram_offset(vertical: bool, layer: Layer, x: usize, y: usize) -> Option<u32> {
+    let (screen, row, col) = if vertical {
+        (y / VERTICAL_ROWS, y % VERTICAL_ROWS, x)
+    } else {
+        (x / SCREEN_COLS, y, x % SCREEN_COLS)
+    };
+    let (_, _, within) = cell_position(vertical, screen, row, col);
+    let screen = u32::try_from(screen).ok()?;
+    let base = match (vertical, layer) {
+        (false, Layer::One) => screen.checked_mul(0x1B0)?,
+        (false, Layer::Two) => screen.checked_mul(0x1B0)?.checked_add(0x1B00)?,
+        (true, Layer::One) => screen.checked_mul(0x200)?,
+        (true, Layer::Two) => return None,
+    };
+    base.checked_add(within)
+}
+
 /// Grid position and RAM offset (from the screen's base pointer) of one cell.
 ///
 /// Horizontal screens are 16×27 row-major blocks laid out left to right.
@@ -436,6 +460,16 @@ fn offset(base: SnesAddr, by: u32) -> Result<SnesAddr, LoadError> {
 #[cfg(test)]
 mod tests {
     use super::cell_position;
+
+    #[test]
+    fn tile_ram_offsets() {
+        use super::{Layer, tile_ram_offset};
+        assert_eq!(tile_ram_offset(false, Layer::One, 0, 0), Some(0));
+        assert_eq!(tile_ram_offset(false, Layer::One, 35, 5), Some(2 * 0x1B0 + 0x53));
+        assert_eq!(tile_ram_offset(false, Layer::Two, 16, 0), Some(0x1B00 + 0x1B0));
+        assert_eq!(tile_ram_offset(true, Layer::One, 19, 18), Some(0x200 + 0x123));
+        assert_eq!(tile_ram_offset(true, Layer::Two, 0, 0), None);
+    }
 
     #[test]
     fn horizontal_and_vertical_cells() {

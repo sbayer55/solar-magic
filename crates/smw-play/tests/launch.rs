@@ -1,10 +1,13 @@
 //! Launches real levels when `SMW_ROM` / `LM_ROM` / `LM3_ROM` are set.
 
-use smw_data::level::Level;
+use smw_data::level::{Layer2, Level};
 use smw_data::{LevelId, RomLayout};
 use smw_play::{
-    Entrance, LaunchRequest, Launcher, MarioState, Powerup, game_mode, player_position,
+    BootCache, CaptureError, CaptureOptions, Entrance, LaunchRequest, Launcher, MarioState, Phase,
+    Powerup, capture_level, game_mode, player_position,
 };
+use smw_render::assets::LevelAssets;
+use smw_render::level::{Layer, LoadedLevel, tile_ram_offset};
 use snes_core::{Console, Input, Region};
 use snes_rom::Rom;
 
@@ -43,30 +46,110 @@ fn level_105_plays_from_its_main_entrance() {
     assert!(console.frame().to_rgba().chunks(4).any(|p| p != [0, 0, 0, 0xFF]));
 }
 
-/// The game's loader, run by the emulator, must leave the same layer 1
-/// tiles in tile RAM as the viewer's untimed run of the same loader.
-#[test]
-#[allow(clippy::expect_used, clippy::arithmetic_side_effects, reason = "test harness")]
-fn tile_ram_matches_the_viewer() {
-    let Some((rom, layout)) = rom_from("SMW_ROM") else { return };
-    let id = LevelId::new(0x105).expect("valid id");
-    let loaded = smw_render::level::load_level(&rom, &layout, id).expect("viewer loads");
-    assert!(!loaded.vertical);
-    let console = launch(&rom, &layout, 0x105, MarioState::default());
-    let grid = &loaded.layer1;
-    let mut mismatches = 0;
-    for y in 0..grid.height() {
-        for x in 0..grid.width() {
-            let (screen, col) = (x / 16, x % 16);
-            let offset = u32::try_from(screen * 0x1B0 + y * 16 + col).expect("fits");
-            let lo = console.peek(0x7E_C800 + offset);
-            let hi = console.peek(0x7F_C800 + offset);
-            if grid.get(x, y) != Some(u16::from_le_bytes([lo, hi])) {
-                mismatches += 1;
+/// A level-shape predicate for `representative_levels`.
+type Shape = fn(&Level) -> bool;
+
+/// Levels worth checking against the machine: fixed anchors plus the first
+/// level of each shape (vertical, layer 2 objects, background, layer 3).
+#[allow(clippy::expect_used, reason = "test harness")]
+fn representative_levels(rom: &Rom, layout: &RomLayout) -> Vec<LevelId> {
+    let anchors = [0x105u16, 0x001, 0x0C5, 0x0E8, 0x1F4];
+    let mut picked: Vec<LevelId> =
+        anchors.iter().map(|&n| LevelId::new(n).expect("valid")).collect();
+    let predicates: [Shape; 4] = [
+        |l| l.vertical,
+        |l| matches!(l.layer2, Layer2::Objects { .. }),
+        |l| matches!(l.layer2, Layer2::Background { .. }),
+        |l| l.secondary.layer3_setting() != 0,
+    ];
+    for id in LevelId::all() {
+        if picked.len() >= 16 {
+            break;
+        }
+        let Ok(level) = Level::load(rom, layout, id) else { continue };
+        if level.header.level_mode().loads_no_objects() {
+            continue;
+        }
+        for pred in predicates {
+            if pred(&level) && !picked.contains(&id) {
+                picked.push(id);
+                break;
             }
         }
     }
-    assert_eq!(mismatches, 0, "layer 1 tiles differ from the viewer in {mismatches} cells");
+    picked
+}
+
+/// Cells where the machine's tile RAM differs from the viewer's grid.
+fn grid_mismatches(assets: &LevelAssets, loaded: &LoadedLevel) -> usize {
+    let mut mismatches = 0usize;
+    let grids = [(Layer::One, Some(&loaded.layer1)), (Layer::Two, loaded.layer2.as_ref())];
+    for (layer, grid) in grids {
+        let Some(grid) = grid else { continue };
+        for y in 0..grid.height() {
+            for x in 0..grid.width() {
+                let Some(offset) = tile_ram_offset(loaded.vertical, layer, x, y) else { continue };
+                if assets.tile_ram.tile(offset) != grid.get(x, y) {
+                    mismatches = mismatches.saturating_add(1);
+                }
+            }
+        }
+    }
+    mismatches
+}
+
+/// The game's loader, run by the emulator, must leave the same tiles in
+/// tile RAM as the viewer's untimed run of the same loader. Covers the
+/// representative set, or every level with `SMW_FULL_ORACLE=1`.
+#[test]
+#[allow(clippy::expect_used, clippy::print_stderr, reason = "test harness")]
+fn tile_ram_matches_the_viewer() {
+    let Some((rom, layout)) = rom_from("SMW_ROM") else { return };
+    let full = std::env::var_os("SMW_FULL_ORACLE").is_some();
+    let levels: Vec<LevelId> =
+        if full { LevelId::all().collect() } else { representative_levels(&rom, &layout) };
+    let mut cache = BootCache::new();
+    let mut failures = Vec::new();
+    for id in levels {
+        let level = Level::load(&rom, &layout, id).expect("level loads");
+        if level.header.level_mode().loads_no_objects() {
+            continue;
+        }
+        let loaded = smw_render::level::load_level(&rom, &layout, id).expect("viewer loads");
+        let assets =
+            match capture_level(&mut cache, &rom, &layout, level, CaptureOptions::default()) {
+                Ok(assets) => assets,
+                Err(CaptureError::UnsupportedMode(_)) => continue,
+                Err(err) => {
+                    failures.push(format!("level {id}: {err}"));
+                    continue;
+                }
+            };
+        let mismatches = grid_mismatches(&assets, &loaded);
+        if mismatches > 0 {
+            failures.push(format!("level {id}: {mismatches} cells differ"));
+        }
+    }
+    assert!(failures.is_empty(), "{}", failures.join("\n"));
+}
+
+/// A console from the boot cache skips the boot phase entirely.
+#[test]
+#[allow(clippy::expect_used, reason = "test harness")]
+fn booted_console_launches_without_booting_again() {
+    let Some((rom, layout)) = rom_from("SMW_ROM") else { return };
+    let mut cache = BootCache::new();
+    let mut console = cache.booted(&rom, &layout).expect("boots");
+    assert!(cache.is_booted());
+    let booted_at = console.bus().clock.frame;
+    let level = Level::load(&rom, &layout, LevelId::new(0x105).expect("valid id")).expect("level");
+    let request = LaunchRequest { level, mario: MarioState::default(), pixel: None };
+    let mut launcher = Launcher::start_booted(&mut console, &rom, &layout, request);
+    assert_ne!(launcher.step(&mut console, &layout), Phase::Boot, "boot phase ends at once");
+    launcher.run_to_play(&mut console, &layout).expect("launches");
+    let frames = console.bus().clock.frame.saturating_sub(booted_at);
+    assert!(frames < 400, "launch from the title took {frames} frames");
+    assert_eq!(game_mode(&console, &layout), layout.launch.modes.level);
 }
 
 #[test]

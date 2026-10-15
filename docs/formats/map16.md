@@ -33,7 +33,11 @@ zero bits of the mask). Tilesets 0 and 7 additionally replace 0x1C4–0x1C7 and
 
 Tiles 0x133–0x13A are animated by swapping their pointers between four frames
 listed at `MAP16AppTable` (`$05:8776`, four bank-`$0D` offsets `8AB0 84E0 8AF0
-8B30`). Solar Magic renders the first frame.
+8B30`). Solar Magic's untimed renderer shows the first frame; the machine
+capture (`smw_play::capture_level`) reads the live pointers out of
+`$7E:0FBE` (`RomLayout::loader.ram_map16_pointers`) instead. `CODE_0581FB`,
+which builds that table, is byte-identical in the vanilla, Lunar Magic 2.53
+and 3.71 ROMs (checked 2026-10-14).
 
 Verified 2026-10-06: tile 0 of every tileset is `70/72/71/73`; tile 0x73 of
 tileset 0 is `C5 15 …` (first `Map16Tileset0` entry); tilesets 0 and 1 agree

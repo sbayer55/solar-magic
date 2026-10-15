@@ -10,12 +10,10 @@ authors.workspace = true
 
 [dependencies]
 smw-data.workspace = true
+smw-render.workspace = true
 snes-core.workspace = true
 snes-rom.workspace = true
 thiserror.workspace = true
-
-[dev-dependencies]
-smw-render.workspace = true
 
 [lints]
 workspace = true

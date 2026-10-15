@@ -8,7 +8,7 @@ use crate::state::{Entrance, LaunchRequest, Player};
 use crate::{WRAM, game_mode, overlays};
 
 /// Frames allowed per phase.
-const BOOT_BUDGET: u32 = 900;
+pub(crate) const BOOT_BUDGET: u32 = 900;
 const LOADER_BUDGET: u32 = 240;
 const LEVEL_BUDGET: u32 = 600;
 
@@ -64,6 +64,18 @@ impl Launcher {
         console: &mut Console,
         rom: &Rom,
         layout: &RomLayout,
+        request: LaunchRequest,
+    ) -> Self {
+        console.reset();
+        Self::start_booted(console, rom, layout, request)
+    }
+
+    /// As [`Launcher::start`] on a console that has already booted (a copy
+    /// from [`crate::BootCache`]): no reset, so the boot phase ends at once.
+    pub fn start_booted(
+        console: &mut Console,
+        rom: &Rom,
+        layout: &RomLayout,
         mut request: LaunchRequest,
     ) -> Self {
         if let Entrance::Position { screen, x_index, y_index } = request.mario.entrance {
@@ -72,7 +84,7 @@ impl Launcher {
             raw[1] = (raw[1] & !0x07) | (x_index & 0x07);
             raw[3] = (raw[3] & !0x1F) | (screen & 0x1F);
         }
-        console.reset();
+        console.clear_overlays();
         overlays::install(console, layout, &request.level);
         let hooks = &layout.launch;
         let entry_pc = hooks.level_select_pc.get();
