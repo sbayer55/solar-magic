@@ -42,6 +42,13 @@ impl LevelId {
     pub fn all() -> impl Iterator<Item = Self> {
         (0..0x200u16).map(Self)
     }
+
+    /// Whether this slot is entered from the overworld (`0x000-0x024` or
+    /// `0x101-0x13B`) rather than only through exits.
+    #[must_use]
+    pub const fn is_overworld(self) -> bool {
+        matches!(self.0, 0x000..=0x024 | 0x101..=0x13B)
+    }
 }
 
 impl fmt::Debug for LevelId {
@@ -81,5 +88,17 @@ mod tests {
         assert_eq!(LevelId::new(0x200), None);
         assert_eq!(LevelId::all().count(), LevelId::COUNT);
         assert_eq!(LevelId::new(0x105).expect("valid").to_string(), "105");
+    }
+
+    #[test]
+    fn overworld_slots() {
+        let overworld = LevelId::all().filter(|id| id.is_overworld()).count();
+        assert_eq!(overworld, 0x25 + 0x3B);
+        assert!(LevelId::new(0x024).unwrap().is_overworld());
+        assert!(!LevelId::new(0x025).unwrap().is_overworld());
+        assert!(!LevelId::new(0x100).unwrap().is_overworld());
+        assert!(LevelId::new(0x101).unwrap().is_overworld());
+        assert!(LevelId::new(0x13B).unwrap().is_overworld());
+        assert!(!LevelId::new(0x13C).unwrap().is_overworld());
     }
 }

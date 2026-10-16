@@ -4,20 +4,25 @@ mod app;
 mod document;
 mod edit;
 mod ips_tool;
+mod names;
 mod panels;
 mod play;
+mod thumbs;
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-/// `solar-magic [ROM] [LEVEL-HEX] [--play]`: optional ROM path and level to
-/// open; `--play` starts the level in the emulator right away.
+/// `solar-magic [ROM] [LEVEL-HEX] [--play] [--gallery]`: optional ROM path
+/// and level to open; `--play` starts the level in the emulator right away,
+/// `--gallery` opens the level list as thumbnail cards.
 fn parse_args() -> app::Launch {
     let mut args = std::env::args_os().skip(1);
     let rom = args.next().map(PathBuf::from);
     let level = args.next().and_then(|a| u16::from_str_radix(&a.to_string_lossy(), 16).ok());
-    let play = args.any(|a| a == "--play");
-    app::Launch { rom, level, play }
+    let flags: Vec<_> = args.collect();
+    let play = flags.iter().any(|a| a == "--play");
+    let gallery = flags.iter().any(|a| a == "--gallery");
+    app::Launch { rom, level, play, gallery }
 }
 
 #[allow(clippy::print_stderr, reason = "startup failure goes to stderr")]

@@ -4,6 +4,7 @@
 //! ([`Level::layer1_bytes`] and friends), which is both the round-trip test
 //! and the basis for writing levels back later.
 
+mod catalogue;
 mod edit;
 mod exits;
 pub mod fields;
@@ -16,6 +17,7 @@ mod save;
 mod screens;
 mod sprites;
 
+pub use catalogue::{Catalogue, ExitEdge, LevelSummary, Parent};
 pub use edit::{EditError, Layer, ObjectSpec, ScreenExitInfo, SpriteSpec, entrance_pixel};
 pub use exits::{ExitId, SecondaryExit};
 pub use fields::{BitField, FieldError};
