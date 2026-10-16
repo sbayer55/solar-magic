@@ -4,6 +4,7 @@ mod app;
 mod document;
 mod edit;
 mod ips_tool;
+mod menu_bar;
 mod panels;
 mod picker;
 mod play;
