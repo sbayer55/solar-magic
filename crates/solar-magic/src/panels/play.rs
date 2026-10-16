@@ -4,7 +4,7 @@ use egui::Sense;
 use smw_play::Phase;
 
 use super::Viewer;
-use crate::play::{Command, PlaySession, read_input};
+use crate::play::{Command, PadInfo, PadKind, PlaySession, read_input};
 
 impl Viewer<'_> {
     pub(super) fn play_panel(&mut self, ui: &mut egui::Ui) {
@@ -90,4 +90,27 @@ fn status(ui: &mut egui::Ui, play: &PlaySession) {
         ui.colored_label(egui::Color32::LIGHT_RED, e.to_string());
     }
     ui.small(crate::play::KeyMap::summary());
+    controller(ui, play.gamepads.as_ref().and_then(crate::play::Gamepads::active));
+}
+
+/// The controller line: which pad drives controller 1 and its buttons.
+fn controller(ui: &mut egui::Ui, pad: Option<PadInfo>) {
+    let Some(pad) = pad else {
+        ui.small("No controller (Xbox, DualSense, or Steam Controller / Deck via Steam Input)");
+        return;
+    };
+    let response = ui.small(format!("🎮 {} — {}", pad.name, pad.kind.summary()));
+    if pad.kind == PadKind::Steam && cfg!(target_os = "macos") {
+        response.on_hover_text(
+            "Steam must be running with Steam Input enabled. \
+             Otherwise the controller acts as a keyboard and mouse.",
+        );
+    }
+    if !pad.mapped {
+        ui.colored_label(
+            egui::Color32::YELLOW,
+            "Unrecognised controller: buttons may be wrong. \
+             Set SDL_GAMECONTROLLERCONFIG to add an SDL mapping.",
+        );
+    }
 }
