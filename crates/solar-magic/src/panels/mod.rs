@@ -9,6 +9,7 @@ mod levels;
 mod map16;
 mod overlays;
 mod palette;
+mod picker;
 mod play;
 mod tools;
 
@@ -30,6 +31,8 @@ pub(crate) enum Tab {
     Info,
     /// Tool choice and the selected item's properties.
     Edit,
+    /// Object and sprite picker.
+    Objects,
     /// Primary and secondary header fields.
     Header,
     /// Screen exits and secondary exits.
@@ -45,11 +48,12 @@ pub(crate) enum Tab {
 }
 
 /// Every tab, for the Window menu.
-pub(crate) const ALL_TABS: [Tab; 10] = [
+pub(crate) const ALL_TABS: [Tab; 11] = [
     Tab::Level,
     Tab::Levels,
     Tab::Info,
     Tab::Edit,
+    Tab::Objects,
     Tab::Header,
     Tab::Exits,
     Tab::Map16,
@@ -66,6 +70,7 @@ impl Tab {
             Self::Levels => "Levels",
             Self::Info => "Info",
             Self::Edit => "Edit",
+            Self::Objects => "Objects",
             Self::Header => "Header",
             Self::Exits => "Exits",
             Self::Map16 => "Map16",
@@ -116,6 +121,7 @@ impl TabViewer for Viewer<'_> {
             Tab::Levels => self.level_list(ui),
             Tab::Info => self.info(ui),
             Tab::Edit => self.edit_panel(ui),
+            Tab::Objects => self.picker_panel(ui),
             Tab::Header => self.header_panel(ui),
             Tab::Exits => self.exits_panel(ui),
             Tab::Map16 => self.map16(ui),

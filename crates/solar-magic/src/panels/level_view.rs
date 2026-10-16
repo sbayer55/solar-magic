@@ -6,6 +6,7 @@ use smw_render::scene::LevelScene;
 
 use super::{Action, Viewer, tile_under, to_f32};
 use crate::edit::{Drag, EditCommand, EditSession, Hit, Tool, band_select, hit_test, rect_between};
+use crate::picker::PickItem;
 
 /// What happened to the pointer over the picture this frame.
 struct Pointer {
@@ -85,6 +86,8 @@ impl Viewer<'_> {
                     shift: ui.input(|i| i.modifiers.shift),
                 };
                 handle_pointer(scene, session, view, &pointer, &mut actions);
+                let mut place = Place { session, view, actions: &mut actions };
+                drop_and_ghost(ui, &response, origin, &mut place);
             });
         ui.data_mut(|d| d.insert_persisted(rect_id, scene_rect));
         if hovered.is_some() {
@@ -93,6 +96,103 @@ impl Viewer<'_> {
         let status = hovered.map(|t| describe_tile(scene, session, t)).unwrap_or_default();
         ui.data_mut(|d| d.insert_temp(egui::Id::new("status_text"), status));
         self.actions.append(&mut actions);
+    }
+}
+
+/// What placing from the picker touches.
+struct Place<'a> {
+    session: &'a EditSession,
+    view: &'a mut crate::app::ViewState,
+    actions: &'a mut Vec<Action>,
+}
+
+/// The tile under the pointer, even while something is being dragged (when
+/// egui reports no hover position). `origin` is the picture's top-left.
+#[allow(clippy::arithmetic_side_effects, reason = "egui geometry math")]
+fn pointer_tile(ui: &egui::Ui, origin: egui::Pos2) -> Option<TilePos> {
+    let ctx = ui.ctx();
+    let global = ctx.pointer_latest_pos()?;
+    let local = ctx.layer_transform_from_global(ui.layer_id()).map_or(global, |t| t * global);
+    let (x, y) = tile_under(local - origin)?;
+    Some(TilePos::new(u16::try_from(x).ok()?, u16::try_from(y).ok()?))
+}
+
+/// Places a picker item dropped on the picture, and shows a ghost of what a
+/// drop or a click would place.
+fn drop_and_ghost(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    origin: egui::Pos2,
+    place: &mut Place<'_>,
+) {
+    let Some(tile) = pointer_tile(ui, origin) else {
+        return;
+    };
+    if let Some(item) = response.dnd_release_payload::<PickItem>() {
+        if let Some(command) = insert_command(place.session, item.tool(), tile) {
+            place.actions.push(Action::Apply(command));
+            place.view.picker.note_used(*item);
+        }
+        return;
+    }
+    let tool = match response.dnd_hover_payload::<PickItem>() {
+        Some(item) => item.tool(),
+        None if response.hovered() => place.session.tool,
+        None => return,
+    };
+    if tool != Tool::Select {
+        draw_ghost(ui.painter(), &place.view.picker, tool, (origin, tile));
+    }
+}
+
+/// The picture of what `tool` would place at `tile`, or an outline when the
+/// picker has no picture of it.
+#[allow(clippy::arithmetic_side_effects, reason = "egui geometry math")]
+fn draw_ghost(
+    painter: &egui::Painter,
+    picker: &crate::picker::PickerState,
+    tool: Tool,
+    (origin, tile): (egui::Pos2, TilePos),
+) {
+    let at = |dx: i32, dy: i32| {
+        let tiles =
+            |n: u16, d: i32| (f32::from(n) + f32::from(i16::try_from(d).unwrap_or(0))) * 16.0;
+        origin + egui::vec2(tiles(tile.x, dx), tiles(tile.y, dy))
+    };
+    let stroke = egui::Stroke::new(1.0, egui::Color32::WHITE);
+    let Some(entry) = picker.entry_for(tool) else {
+        let rect = egui::Rect::from_min_size(at(0, 0), egui::vec2(16.0, 16.0));
+        painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
+        return;
+    };
+    let (w, h) = entry.thumb.tiles;
+    let size = egui::vec2(to_f32(to_u32(w)) * 16.0, to_f32(to_u32(h)) * 16.0);
+    let rect = egui::Rect::from_min_size(at(entry.thumb.offset.0, entry.thumb.offset.1), size);
+    painter.image(
+        entry.thumb.texture.id(),
+        rect,
+        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)),
+        egui::Color32::from_white_alpha(160),
+    );
+    painter.rect_stroke(rect, 0.0, stroke, egui::StrokeKind::Inside);
+}
+
+fn to_u32(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// The command that places what `tool` places at `tile` (`None` for the
+/// select tool).
+const fn insert_command(session: &EditSession, tool: Tool, tile: TilePos) -> Option<EditCommand> {
+    let layer = session.selection.layer;
+    match tool {
+        Tool::PlaceSprite { number, extra_bits } => {
+            Some(EditCommand::InsertSprite { spec: SpriteSpec { number, extra_bits, pos: tile } })
+        }
+        Tool::PlaceObject { number, third } => {
+            Some(EditCommand::InsertObject { layer, spec: ObjectSpec { number, third, pos: tile } })
+        }
+        Tool::Select => None,
     }
 }
 
@@ -203,16 +303,11 @@ fn handle_pointer(
         finish_drag(scene, session, view, actions);
     }
     if pointer.clicked {
-        match session.tool {
-            Tool::Select => session.selection.click(hit_at(tile), pointer.shift),
-            Tool::PlaceObject { number, third } => {
-                let spec = ObjectSpec { number, third, pos: tile };
-                actions.push(Action::Apply(EditCommand::InsertObject { layer, spec }));
-            }
-            Tool::PlaceSprite { number, extra_bits } => {
-                let spec = SpriteSpec { number, extra_bits, pos: tile };
-                actions.push(Action::Apply(EditCommand::InsertSprite { spec }));
-            }
+        if let Some(command) = insert_command(session, session.tool, tile) {
+            actions.push(Action::Apply(command));
+            view.picker.note_tool_used(session.tool);
+        } else {
+            session.selection.click(hit_at(tile), pointer.shift);
         }
     }
 }

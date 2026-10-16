@@ -5,6 +5,7 @@ mod document;
 mod edit;
 mod ips_tool;
 mod panels;
+mod picker;
 mod play;
 
 use std::path::PathBuf;

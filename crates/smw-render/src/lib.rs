@@ -15,6 +15,7 @@ pub mod scene;
 pub mod scene_assets;
 pub mod scene_patch;
 pub mod sprites;
+pub mod thumbs;
 mod tiles;
 
 pub use atlas::{CHAR_COUNT, CHARS_PER_SLOT, CharAtlas, CharSlot};
