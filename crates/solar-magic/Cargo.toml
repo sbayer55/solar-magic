@@ -13,7 +13,9 @@ name = "solar-magic"
 path = "src/main.rs"
 
 [features]
-# Gamepad input in the Play panel (gilrs; needs libudev-dev on Linux).
+default = ["gamepad"]
+# Gamepad input in the Play panel: Xbox, DualSense, Steam Input and any pad in
+# the SDL controller database (gilrs; needs libudev-dev on Linux).
 gamepad = ["dep:gilrs"]
 
 [dependencies]
