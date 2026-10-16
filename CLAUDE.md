@@ -38,7 +38,7 @@ cargo xtask fetch-test-roms && SNES_TEST_ROMS=target/test-roms/SNES cargo test -
 cargo solar emu-boot "roms/Super Mario World (USA).sfc" --frames 600 --out title.png [--trace 20000]  # in-house emulator: boot and render
 cargo solar emu-bench "roms/Super Mario World (USA).sfc" [--frames 600] [--warmup 120]   # emulator speed vs real time
 cargo solar play "roms/Super Mario World (USA).sfc" 105 --frames 120 --out play.png [--audio play.wav] [--midway] [--exit ID] [--powerup 0-3]
-cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105 [--play]   # GUI editor; --play starts the level in the emulator (dev profile already optimizes the emulator crates)
+cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105 [--play] [--gallery]   # GUI editor; --play starts the level in the emulator, --gallery opens the level list as thumbnails (dev profile already optimizes the emulator crates)
 cargo run -p solar-magic --no-default-features -- <rom> 105   # GUI without gamepad input (gilrs, on by default, needs libudev-dev on Linux); see docs/emulation/input.md
 ```
 

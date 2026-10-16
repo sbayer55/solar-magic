@@ -237,6 +237,35 @@ pub struct GameModes {
     pub level: u8,
 }
 
+/// The overworld level-name tables: two bytes per translevel selecting a
+/// string from each of three word tables, drawn by `CODE_049D07`.
+/// `docs/formats/level-names.md`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LevelNameTables {
+    /// `LevelNames`: two bytes per translevel (`$00`-`$5C` in vanilla).
+    pub names: SnesAddr,
+    /// Number of translevel entries in `names`.
+    pub count: usize,
+    /// `LevelNameStrings`: the tile strings the word tables point into; a
+    /// string ends with the tile whose bit 7 is set.
+    pub strings: SnesAddr,
+    /// Word offsets (into `strings`) of the first word of a name.
+    pub first_words: SnesAddr,
+    /// Word offsets of the second word (indexed by the high nibble of byte 0).
+    pub second_words: SnesAddr,
+    /// Word offsets of the last word (indexed by the low nibble of byte 0).
+    pub third_words: SnesAddr,
+    /// End of the third table (the drawing routine follows it).
+    pub tables_end: SnesAddr,
+    /// Where the drawing routine indexes the first table; the bytes in
+    /// `routine_fingerprint` must be there for the tables to be trusted.
+    pub routine: SnesAddr,
+    /// `LDA $01 / AND #$007F / ASL / TAY / LDA $9C91,Y / TAY / SEP #$20 / LDA $9AC5,Y`.
+    pub routine_fingerprint: &'static [u8],
+    /// Tiles the overworld border has room for (`$26` bytes of tilemap).
+    pub max_tiles: usize,
+}
+
 /// The player entrance position tables (`docs/formats/level-header.md`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EntranceTables {
@@ -345,6 +374,9 @@ pub struct RomLayout {
 
     /// Player entrance position tables.
     pub entrance: EntranceTables,
+
+    /// The overworld level-name tables. `docs/formats/level-names.md`
+    pub level_names: LevelNameTables,
 
     /// How to send the running game into a level.
     pub launch: LaunchHooks,

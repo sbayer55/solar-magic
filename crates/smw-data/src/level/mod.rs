@@ -4,6 +4,7 @@
 //! ([`Level::layer1_bytes`] and friends), which is both the round-trip test
 //! and the basis for writing levels back later.
 
+mod catalogue;
 mod edit;
 mod exits;
 pub mod fields;
@@ -11,11 +12,13 @@ mod header;
 mod layer2;
 mod lm_info;
 pub mod lm_objects;
+mod names;
 mod objects;
 mod save;
 mod screens;
 mod sprites;
 
+pub use catalogue::{Catalogue, ExitEdge, LevelSummary, Parent};
 pub use edit::{EditError, Layer, ObjectSpec, ScreenExitInfo, SpriteSpec, entrance_pixel};
 pub use exits::{ExitId, SecondaryExit};
 pub use fields::{BitField, FieldError};
@@ -25,6 +28,7 @@ pub use layer2::{
     Layer2, decode_bg_rle, decode_bg_rle_capped, encode_bg_rle,
 };
 pub use lm_info::{LmLevelFlags, LmLevelInfo};
+pub use names::{OverworldNames, tiles_to_text};
 pub use objects::{MAX_OBJECT_LEN, ObjectFormat, ObjectKind, ObjectStream, RawObject};
 pub use save::{Placement, SaveError, SaveOptions, SaveReport, pointer_refs, save_level};
 pub use screens::{SCREEN_TILES, TilePos, join_position, split_position};

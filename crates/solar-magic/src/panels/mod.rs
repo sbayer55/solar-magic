@@ -14,6 +14,8 @@ mod picker;
 mod play;
 mod tools;
 
+pub(crate) use levels::LevelsView;
+
 use egui_dock::TabViewer;
 use smw_data::LevelId;
 
