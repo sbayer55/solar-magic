@@ -59,6 +59,11 @@ cargo solar ips-create original.sfc modified.sfc out/changes.ips
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105 --play   # the editor, playing the level
 ```
 
+With [`just`](https://github.com/casey/just) installed, `just` lists the common
+tasks (`just check` runs what CI runs, `just run 105` opens the editor), and on
+macOS `just dmg` (or `just dmg universal`) builds a drag-to-Applications installer
+in `target/dist/`.
+
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and
 [`docs/formats/`](docs/formats/) for the file formats.
 
