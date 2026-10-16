@@ -12,6 +12,7 @@ use smw_render::scene::RenderOptions;
 use crate::document::Document;
 use crate::edit::EditCommand;
 use crate::ips_tool::IpsTool;
+use crate::menu_bar;
 use crate::panels::camera::{self, CameraCommand};
 use crate::panels::{ALL_TABS, Action, LevelsView, Tab, Viewer};
 
@@ -429,7 +430,7 @@ impl App {
 
     fn file_menu(&mut self, ui: &mut egui::Ui) {
         let has_doc = self.doc.is_some();
-        ui.menu_button("File", |ui| {
+        menu_bar::menu_button(ui, "File", |ui| {
             if ui.button("Open ROM…").clicked() {
                 ui.close();
                 self.request(Pending::OpenRom);
@@ -475,7 +476,7 @@ impl App {
             .as_ref()
             .and_then(|d| d.session.as_ref())
             .is_some_and(|s| !s.clipboard.is_empty());
-        ui.menu_button("Edit", |ui| {
+        menu_bar::menu_button(ui, "Edit", |ui| {
             const DELETE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::NONE, Key::Delete);
             let items: [MenuItem; 7] = [
                 ("Undo", undo, undo.is_some(), &UNDO, EditAction::Undo),
@@ -499,7 +500,7 @@ impl App {
     }
 
     fn view_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("View", |ui| {
+        menu_bar::menu_button(ui, "View", |ui| {
             ui.checkbox(&mut self.view.options.layer1, "Layer 1");
             ui.checkbox(&mut self.view.options.layer2, "Layer 2");
             ui.checkbox(&mut self.view.options.sprites, "Sprite markers");
@@ -526,7 +527,7 @@ impl App {
     }
 
     fn window_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Window", |ui| {
+        menu_bar::menu_button(ui, "Window", |ui| {
             for tab in ALL_TABS {
                 let open = self.dock.find_tab(&tab).is_some();
                 if ui.selectable_label(open, tab.title()).clicked() {
@@ -545,7 +546,7 @@ impl App {
     }
 
     fn tools_menu(&mut self, ui: &mut egui::Ui) {
-        ui.menu_button("Tools", |ui| {
+        menu_bar::menu_button(ui, "Tools", |ui| {
             let play =
                 egui::Button::new("Play Level").shortcut_text(ui.ctx().format_shortcut(&PLAY));
             if ui.add_enabled(self.doc.is_some(), play).clicked() {
