@@ -50,6 +50,8 @@ pub(crate) struct ViewState {
     /// The tile the pointer was last over in the level view: where Paste puts
     /// the clipboard's top-left item.
     pub(crate) last_hovered: Option<TilePos>,
+    /// The Objects panel's filters, order and thumbnails.
+    pub(crate) picker: crate::picker::PickerState,
     /// A camera move for the level view to make next frame.
     pub(crate) camera_request: Option<CameraCommand>,
     /// The level the camera was last fitted to; a different level re-fits.
@@ -67,6 +69,7 @@ impl Default for ViewState {
             show_entrances: true,
             drag_group: 0,
             last_hovered: None,
+            picker: crate::picker::PickerState::default(),
             camera_request: None,
             camera_level: None,
         }
@@ -746,8 +749,11 @@ fn default_layout() -> DockState<Tab> {
     let mut state = DockState::new(vec![Tab::Level]);
     let surface = state.main_surface_mut();
     let [center, _left] = surface.split_left(NodeIndex::root(), 0.16, vec![Tab::Levels]);
-    let [_, right] =
-        surface.split_right(center, 0.70, vec![Tab::Edit, Tab::Header, Tab::Exits, Tab::Info]);
+    let [_, right] = surface.split_right(
+        center,
+        0.70,
+        vec![Tab::Objects, Tab::Edit, Tab::Header, Tab::Exits, Tab::Info],
+    );
     surface.split_below(right, 0.55, vec![Tab::Map16, Tab::Palette]);
     state
 }
