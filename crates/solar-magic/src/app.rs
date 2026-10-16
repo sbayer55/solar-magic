@@ -13,7 +13,7 @@ use crate::document::Document;
 use crate::edit::EditCommand;
 use crate::ips_tool::IpsTool;
 use crate::panels::camera::{self, CameraCommand};
-use crate::panels::{ALL_TABS, Action, Tab, Viewer};
+use crate::panels::{ALL_TABS, Action, LevelsView, Tab, Viewer};
 
 /// Persisted between runs.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,11 +22,17 @@ pub(crate) struct Settings {
     pub(crate) last_rom: Option<PathBuf>,
     /// Last level viewed.
     pub(crate) last_level: u16,
+    /// Levels visited before the last one, newest first.
+    #[serde(default)]
+    pub(crate) recent: Vec<u16>,
+    /// Whether the level list shows thumbnail cards.
+    #[serde(default)]
+    pub(crate) levels_grid: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
-        Self { last_rom: None, last_level: 0x105 }
+        Self { last_rom: None, last_level: 0x105, recent: Vec::new(), levels_grid: false }
     }
 }
 
@@ -35,8 +41,8 @@ impl Default for Settings {
 pub(crate) struct ViewState {
     /// What the level view draws.
     pub(crate) options: RenderOptions,
-    /// Level list filter text.
-    pub(crate) filter: String,
+    /// The level list's search, chips, cursor and recents.
+    pub(crate) levels: LevelsView,
     /// Overlay toggles.
     pub(crate) show_screen_grid: bool,
     /// 16×16 tile grid.
@@ -62,7 +68,7 @@ impl Default for ViewState {
     fn default() -> Self {
         Self {
             options: RenderOptions { layer1: true, layer2: true, sprites: true, owners: false },
-            filter: String::new(),
+            levels: LevelsView::default(),
             show_screen_grid: true,
             show_tile_grid: false,
             show_exits: true,
@@ -85,6 +91,8 @@ pub(crate) struct Launch {
     pub(crate) level: Option<u16>,
     /// Start playing the level immediately.
     pub(crate) play: bool,
+    /// Show the level list as thumbnail cards.
+    pub(crate) gallery: bool,
 }
 
 /// Something that must wait for the user to confirm discarding edits.
@@ -128,6 +136,8 @@ const CUT: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::X);
 const PASTE: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::V);
 const SELECT_ALL: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::A);
 const PLAY: KeyboardShortcut = KeyboardShortcut::new(Modifiers::COMMAND, Key::T);
+const GALLERY: KeyboardShortcut =
+    KeyboardShortcut::new(Modifiers::COMMAND.plus(Modifiers::SHIFT), Key::V);
 
 impl App {
     /// Creates the app, opening the launch ROM or else the remembered one.
@@ -143,9 +153,18 @@ impl App {
         let path = launch.rom.or_else(|| settings.last_rom.clone());
         // Cmd +/−/0 drive the level camera, not the UI scale.
         cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
+        let mut view = ViewState::default();
+        view.levels.grid = settings.levels_grid || launch.gallery;
+        view.levels.recent = settings.recent.iter().rev().filter_map(|&n| LevelId::new(n)).fold(
+            std::collections::VecDeque::new(),
+            |mut recent, id| {
+                recent.push_front(id);
+                recent
+            },
+        );
         let mut app = Self {
             settings,
-            view: ViewState::default(),
+            view,
             doc: None,
             error: None,
             dock: default_layout(),
@@ -216,7 +235,12 @@ impl App {
             Pending::OpenRom => self.pick_rom(),
             Pending::SelectLevel(level) => {
                 if let Some(doc) = self.doc.as_mut() {
+                    let before = doc.level;
                     doc.select(level);
+                    if before != level {
+                        self.view.levels.remember(before);
+                    }
+                    self.view.levels.cursor = None;
                 }
             }
             Pending::Revert => {
@@ -372,6 +396,9 @@ impl App {
         if let Some(command) = ctx.input_mut(camera::consume_shortcut) {
             self.view.camera_request = Some(command);
         }
+        if ctx.input_mut(|i| i.consume_shortcut(&GALLERY)) {
+            self.view.levels.grid = !self.view.levels.grid;
+        }
         for action in pressed {
             self.edit_menu_action(action);
         }
@@ -493,6 +520,8 @@ impl App {
                     }
                 }
             });
+            let gallery = egui::Checkbox::new(&mut self.view.levels.grid, "Levels as gallery");
+            ui.add(gallery).on_hover_text(ui.ctx().format_shortcut(&GALLERY));
         });
     }
 
@@ -679,6 +708,8 @@ impl eframe::App for App {
         if let Some(doc) = &self.doc {
             self.settings.last_level = doc.level.get();
         }
+        self.settings.recent = self.view.levels.recent.iter().map(|id| id.get()).collect();
+        self.settings.levels_grid = self.view.levels.grid;
         if let Ok(json) = serde_json::to_string(&self.settings) {
             storage.set_string(SETTINGS_KEY, json);
         }
@@ -748,7 +779,7 @@ impl eframe::App for App {
 fn default_layout() -> DockState<Tab> {
     let mut state = DockState::new(vec![Tab::Level]);
     let surface = state.main_surface_mut();
-    let [center, _left] = surface.split_left(NodeIndex::root(), 0.16, vec![Tab::Levels]);
+    let [center, _left] = surface.split_left(NodeIndex::root(), 0.22, vec![Tab::Levels]);
     let [_, right] = surface.split_right(
         center,
         0.70,

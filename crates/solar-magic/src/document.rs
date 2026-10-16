@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use smw_data::level::{EditError, Level, SaveOptions, SaveReport, save_level};
+use smw_data::level::{Catalogue, EditError, Level, SaveOptions, SaveReport, save_level};
 use smw_data::{LevelId, RomLayout};
 use smw_render::Raster;
 use smw_render::scene::{LevelScene, RenderOptions, pixel_rect};
@@ -12,6 +12,8 @@ use smw_render::scene_patch::{Dirty, dirty_between};
 use snes_rom::Rom;
 
 use crate::edit::{EditCommand, EditSession};
+use crate::names::LevelNames;
+use crate::thumbs::Thumbnails;
 
 /// An open ROM with one level loaded for editing.
 pub(crate) struct Document {
@@ -41,6 +43,12 @@ pub(crate) struct Document {
     pub(crate) status: String,
     /// The level running in the emulator, if started.
     pub(crate) play: Option<crate::play::PlaySession>,
+    /// Every slot's summary and the exit graph, for the level list.
+    pub(crate) catalogue: Catalogue,
+    /// User-given level names (a sidecar next to the ROM).
+    pub(crate) names: LevelNames,
+    /// Gallery thumbnails, started the first time the gallery is shown.
+    pub(crate) thumbs: Option<Thumbnails>,
 }
 
 impl std::fmt::Debug for Document {
@@ -61,6 +69,7 @@ impl Document {
     pub(crate) fn open(path: &Path, level: LevelId) -> anyhow::Result<Self> {
         let rom = Rom::load(path).with_context(|| format!("loading {}", path.display()))?;
         let layout = RomLayout::detect(&rom)?;
+        let catalogue = Catalogue::scan(&rom, &layout);
         let mut doc = Self {
             path: path.to_owned(),
             rom,
@@ -75,6 +84,9 @@ impl Document {
             rendered_with: None,
             status: String::new(),
             play: None,
+            catalogue,
+            names: LevelNames::load(path),
+            thumbs: None,
         };
         doc.select(level);
         Ok(doc)
@@ -109,6 +121,13 @@ impl Document {
                 Some(crate::play::PlaySession::start(ctx, &self.rom, &self.layout, request, srm));
         }
         self.status = format!("playing level {}", self.level);
+    }
+
+    /// Starts the thumbnail worker if needed and takes in what it finished.
+    pub(crate) fn ensure_thumbnails(&mut self, ctx: &egui::Context) {
+        let thumbs =
+            self.thumbs.get_or_insert_with(|| Thumbnails::start(ctx, &self.rom, &self.layout));
+        thumbs.poll(ctx);
     }
 
     /// Loads another level, discarding any edits.
@@ -247,6 +266,10 @@ impl Document {
         rom.save(path).with_context(|| format!("writing {}", path.display()))?;
         self.rom = rom;
         path.clone_into(&mut self.path);
+        self.catalogue.refresh(&self.rom, &self.layout, self.level);
+        self.names.follow(path);
+        // The worker holds the old ROM; the gallery restarts it on demand.
+        self.thumbs = None;
         if let Some(session) = self.session.as_mut() {
             session.history.mark_saved();
             // Refresh the addresses the level was loaded from.
