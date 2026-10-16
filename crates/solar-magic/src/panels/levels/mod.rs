@@ -14,7 +14,6 @@ use smw_data::level::{Catalogue, LevelSummary};
 use self::items::{Item, ItemResponse, Picture};
 use super::{Action, Viewer};
 use crate::document::Document;
-use crate::names::LevelNames;
 
 /// Which slots the chips keep.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -44,8 +43,10 @@ pub(crate) struct Rename {
 }
 
 impl Rename {
-    fn start(names: &LevelNames, id: LevelId) -> Self {
-        Self { id, text: names.get(id).unwrap_or_default().to_owned(), focused: false }
+    /// Starts with the name shown (the user's or the ROM's), so a ROM name
+    /// can be adjusted rather than retyped.
+    fn start(doc: &Document, id: LevelId) -> Self {
+        Self { id, text: doc.name_of(id).unwrap_or_default().to_owned(), focused: false }
     }
 }
 
@@ -97,7 +98,13 @@ impl Viewer<'_> {
         let doc = &mut *self.doc;
         let view = &mut self.view.levels;
         let modified = doc.is_dirty().then_some(doc.level);
-        let filter = query::Filter { catalogue: &doc.catalogue, names: &doc.names, view, modified };
+        let filter = query::Filter {
+            catalogue: &doc.catalogue,
+            names: &doc.names,
+            rom_names: &doc.rom_names,
+            view,
+            modified,
+        };
         let shown = filter.visible();
         let mut actions = Vec::new();
         keyboard(ui, view, doc, &shown, &mut actions);
@@ -225,7 +232,7 @@ fn recent_row(ui: &mut egui::Ui, lane: &mut Lane<'_>) {
         ui.weak("Recent");
         for id in recent {
             let label =
-                doc.names.get(id).map_or_else(|| id.to_string(), |name| format!("{id}  {name}"));
+                doc.name_of(id).map_or_else(|| id.to_string(), |name| format!("{id}  {name}"));
             if ui.small_button(label).clicked() {
                 lane.actions.push(Action::SelectLevel(id));
             }
@@ -309,7 +316,7 @@ fn react(ui: &mut egui::Ui, lane: &mut Lane<'_>, item: &Item, drawn: ItemRespons
         return;
     }
     if drawn.response.double_clicked() {
-        lane.view.renaming = Some(Rename::start(&lane.doc.names, item.id));
+        lane.view.renaming = Some(Rename::start(lane.doc, item.id));
     } else if drawn.response.clicked() {
         lane.view.cursor = Some(item.id);
         if !item.current {
@@ -337,8 +344,15 @@ fn rename_box(ui: &mut egui::Ui, doc: &mut Document, view: &mut LevelsView, rect
     }
     if response.lost_focus() {
         let commit = ui.input(|i| i.key_pressed(Key::Enter));
-        if commit && let Err(err) = doc.names.set(rename.id, &rename.text) {
-            doc.status = format!("cannot save level names: {err}");
+        if commit {
+            // Typing the ROM's own name back clears the user's override.
+            let text = match doc.rom_names.get(rename.id) {
+                Some(rom_name) if rom_name == rename.text.trim() => "",
+                _ => rename.text.as_str(),
+            };
+            if let Err(err) = doc.names.set(rename.id, text) {
+                doc.status = format!("cannot save level names: {err}");
+            }
         }
         view.renaming = None;
     }
@@ -382,7 +396,7 @@ fn keyboard(
         actions.push(Action::SelectLevel(id));
     }
     if rename {
-        view.renaming = Some(Rename::start(&doc.names, cursor));
+        view.renaming = Some(Rename::start(doc, cursor));
     }
 }
 
@@ -390,7 +404,7 @@ fn keyboard(
 fn item_for(doc: &Document, view: &LevelsView, id: LevelId) -> Item {
     let summary = doc.catalogue.get(id);
     let unused = doc.catalogue.is_unused(id);
-    let (name, derived) = doc.names.get(id).map_or_else(
+    let (name, derived) = doc.name_of(id).map_or_else(
         || (derived_name(&doc.catalogue, id, unused), true),
         |n| (n.to_owned(), false),
     );

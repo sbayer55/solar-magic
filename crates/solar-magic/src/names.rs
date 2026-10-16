@@ -1,6 +1,6 @@
 //! User-given level names, kept in a JSON sidecar next to the ROM
-//! (`<rom>.names.json`): the ROM itself has no per-slot name table that is
-//! verified yet, so names are the editor's own metadata.
+//! (`<rom>.names.json`). They override the overworld's own names
+//! (`smw_data::level::OverworldNames`), which only cover the overworld slots.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

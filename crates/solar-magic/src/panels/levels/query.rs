@@ -2,7 +2,7 @@
 //! filter chips and the sort choice applied to the catalogue.
 
 use smw_data::LevelId;
-use smw_data::level::{Catalogue, LevelSummary};
+use smw_data::level::{Catalogue, LevelSummary, OverworldNames};
 
 use super::{LevelsView, Scope, Sort};
 use crate::names::LevelNames;
@@ -117,12 +117,18 @@ fn term_matches(term: &Term, level: &LevelSummary, name: Option<&str>) -> bool {
 pub(super) struct Filter<'a> {
     pub(super) catalogue: &'a Catalogue,
     pub(super) names: &'a LevelNames,
+    pub(super) rom_names: &'a OverworldNames,
     pub(super) view: &'a LevelsView,
     /// The open level, when it has unsaved edits.
     pub(super) modified: Option<LevelId>,
 }
 
 impl Filter<'_> {
+    /// The name a slot is listed under: the user's, else the overworld's.
+    fn name(&self, id: LevelId) -> Option<&str> {
+        self.names.get(id).or_else(|| self.rom_names.get(id))
+    }
+
     /// The levels that pass the search and chips, in the chosen order.
     pub(super) fn visible(&self) -> Vec<LevelId> {
         let terms = parse(&self.view.query);
@@ -147,7 +153,7 @@ impl Filter<'_> {
             && (!self.view.modified_only || self.modified == Some(id))
             && (!self.view.hide_unused || !self.catalogue.is_unused(id))
             && self.view.tileset.is_none_or(|t| t == level.tileset)
-            && terms.iter().all(|term| term_matches(term, level, self.names.get(id)))
+            && terms.iter().all(|term| term_matches(term, level, self.name(id)))
     }
 
     fn sort(&self, ids: &mut [LevelId]) {
@@ -155,7 +161,7 @@ impl Filter<'_> {
         match self.view.sort {
             Sort::Number => {}
             Sort::Name => ids.sort_by_key(|id| {
-                let name = self.names.get(*id).map(str::to_ascii_uppercase);
+                let name = self.name(*id).map(str::to_ascii_uppercase);
                 (name.is_none(), name, *id)
             }),
             Sort::Screens => {

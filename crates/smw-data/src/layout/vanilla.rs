@@ -4,7 +4,7 @@ use snes_rom::SnesAddr;
 
 use super::{
     EntranceTables, FreeRange, GameModes, LaunchHooks, LaunchRam, LayoutKind, LevelLoader,
-    Map16Tables, PaletteTables, RomLayout, SplitPointerTable,
+    LevelNameTables, Map16Tables, PaletteTables, RomLayout, SplitPointerTable,
 };
 
 /// The vanilla USA ROM layout.
@@ -74,6 +74,21 @@ pub const VANILLA: RomLayout = RomLayout {
         y_high: SnesAddr::lit(0x05_D740),
         x_low: SnesAddr::lit(0x05_D750),
         x_high: SnesAddr::lit(0x05_D758),
+    },
+    level_names: LevelNameTables {
+        names: SnesAddr::lit(0x04_A0FC),
+        count: 0x5D,
+        strings: SnesAddr::lit(0x04_9AC5),
+        first_words: SnesAddr::lit(0x04_9C91),
+        second_words: SnesAddr::lit(0x04_9CCF),
+        third_words: SnesAddr::lit(0x04_9CED),
+        tables_end: SnesAddr::lit(0x04_9D07),
+        routine: SnesAddr::lit(0x04_9D28),
+        routine_fingerprint: &[
+            0xA5, 0x01, 0x29, 0x7F, 0x00, 0x0A, 0xA8, 0xB9, 0x91, 0x9C, 0xA8, 0xE2, 0x20, 0xB9,
+            0xC5, 0x9A,
+        ],
+        max_tiles: 19,
     },
     launch: LaunchHooks {
         level_select_pc: SnesAddr::lit(0x05_D8B7),

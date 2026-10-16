@@ -15,7 +15,8 @@ pub(super) const CARD_MIN_WIDTH: f32 = 150.0;
 /// A level as the list shows it.
 pub(super) struct Item {
     pub(super) id: LevelId,
-    /// The user's name, or a derived hint such as `from 105 scr 07`.
+    /// The user's name, else the ROM's overworld name, or a derived hint
+    /// such as `from 105 scr 07`.
     pub(super) name: String,
     /// Whether `name` is a derived hint rather than a given name.
     pub(super) derived: bool,

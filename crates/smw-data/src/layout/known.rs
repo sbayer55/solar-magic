@@ -125,8 +125,34 @@ impl RomLayout {
         out.push(r("entrance.y_high", self.entrance.y_high, 16, Some(1)));
         out.push(r("entrance.x_low", self.entrance.x_low, 8, Some(1)));
         out.push(r("entrance.x_high", self.entrance.x_high, 8, Some(1)));
+        out.extend(self.level_name_ranges());
         out.extend(self.lunar_magic_static_ranges());
         out
+    }
+
+    fn level_name_ranges(&self) -> Vec<KnownRange> {
+        let n = self.level_names;
+        let r = KnownRange::new;
+        let span = |from: SnesAddr, to: SnesAddr| {
+            usize::try_from(to.get().saturating_sub(from.get())).unwrap_or(0)
+        };
+        vec![
+            r("level_names.names", n.names, n.count.saturating_mul(2), Some(2)),
+            r("level_names.strings", n.strings, span(n.strings, n.first_words), None),
+            r(
+                "level_names.first_words",
+                n.first_words,
+                span(n.first_words, n.second_words),
+                Some(2),
+            ),
+            r(
+                "level_names.second_words",
+                n.second_words,
+                span(n.second_words, n.third_words),
+                Some(2),
+            ),
+            r("level_names.third_words", n.third_words, span(n.third_words, n.tables_end), Some(2)),
+        ]
     }
 
     fn palette_ranges(&self) -> Vec<KnownRange> {

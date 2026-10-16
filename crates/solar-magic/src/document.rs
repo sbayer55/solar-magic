@@ -4,7 +4,9 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::Context as _;
-use smw_data::level::{Catalogue, EditError, Level, SaveOptions, SaveReport, save_level};
+use smw_data::level::{
+    Catalogue, EditError, Level, OverworldNames, SaveOptions, SaveReport, save_level,
+};
 use smw_data::{LevelId, RomLayout};
 use smw_render::Raster;
 use smw_render::scene::{LevelScene, RenderOptions, pixel_rect};
@@ -47,6 +49,8 @@ pub(crate) struct Document {
     pub(crate) catalogue: Catalogue,
     /// User-given level names (a sidecar next to the ROM).
     pub(crate) names: LevelNames,
+    /// The names the ROM's overworld gives its levels.
+    pub(crate) rom_names: OverworldNames,
     /// Gallery thumbnails, started the first time the gallery is shown.
     pub(crate) thumbs: Option<Thumbnails>,
 }
@@ -70,6 +74,7 @@ impl Document {
         let rom = Rom::load(path).with_context(|| format!("loading {}", path.display()))?;
         let layout = RomLayout::detect(&rom)?;
         let catalogue = Catalogue::scan(&rom, &layout);
+        let rom_names = OverworldNames::read(&rom, &layout);
         let mut doc = Self {
             path: path.to_owned(),
             rom,
@@ -86,6 +91,7 @@ impl Document {
             play: None,
             catalogue,
             names: LevelNames::load(path),
+            rom_names,
             thumbs: None,
         };
         doc.select(level);
@@ -278,6 +284,11 @@ impl Document {
             }
         }
         Ok(report)
+    }
+
+    /// The name a slot is listed under: the user's, else the overworld's.
+    pub(crate) fn name_of(&self, id: LevelId) -> Option<&str> {
+        self.names.get(id).or_else(|| self.rom_names.get(id))
     }
 
     /// Drops all edits and reloads the level from the ROM.
