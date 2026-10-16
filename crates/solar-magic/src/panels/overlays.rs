@@ -153,14 +153,8 @@ fn draw_selection(painter: &Painter, frame: &Frame<'_>) {
             painter.rect_stroke(tile_rect(origin, *bounds), 0.0, stroke, StrokeKind::Outside);
         }
     }
-    let vertical = scene.loaded.vertical;
     for &index in &session.selection.sprites {
-        if let Some(sprite) = scene.loaded.level.sprites.sprites.get(index) {
-            let (x, y) = sprite_tile_position(*sprite, vertical);
-            let rect = Rect::from_min_size(
-                origin + Vec2::new(super::to_f32(x) * 16.0, super::to_f32(y) * 16.0),
-                Vec2::splat(16.0),
-            );
+        if let Some(rect) = sprite_rect(scene, origin, index) {
             painter.rect_stroke(rect, 0.0, stroke, StrokeKind::Outside);
         }
     }
@@ -169,4 +163,33 @@ fn draw_selection(painter: &Painter, frame: &Frame<'_>) {
         painter.rect_filled(rect, 0.0, BAND);
         painter.rect_stroke(rect, 0.0, Stroke::new(1.0 / zoom, SELECTION), StrokeKind::Inside);
     }
+}
+
+/// Pixel rectangle of sprite `index`'s marker tile.
+#[allow(clippy::arithmetic_side_effects, reason = "egui geometry math")]
+fn sprite_rect(scene: &LevelScene, origin: Pos2, index: usize) -> Option<Rect> {
+    let sprite = scene.loaded.level.sprites.sprites.get(index)?;
+    let (x, y) = sprite_tile_position(*sprite, scene.loaded.vertical);
+    Some(Rect::from_min_size(
+        origin + Vec2::new(super::to_f32(x) * 16.0, super::to_f32(y) * 16.0),
+        Vec2::splat(16.0),
+    ))
+}
+
+/// The box around everything selected, in scene coordinates.
+pub(super) fn selection_bounds(
+    scene: &LevelScene,
+    session: &EditSession,
+    origin: Pos2,
+) -> Option<Rect> {
+    let layer = crate::edit::render_layer(session.selection.layer);
+    let bounds = scene.loaded.ownership.bounds(layer);
+    let objects = session
+        .selection
+        .objects
+        .iter()
+        .filter_map(|&i| bounds.get(i).copied().flatten())
+        .map(|r| tile_rect(origin, r));
+    let sprites = session.selection.sprites.iter().filter_map(|&i| sprite_rect(scene, origin, i));
+    objects.chain(sprites).reduce(Rect::union)
 }
