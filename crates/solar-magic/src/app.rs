@@ -12,6 +12,7 @@ use smw_render::scene::RenderOptions;
 use crate::document::Document;
 use crate::edit::EditCommand;
 use crate::ips_tool::IpsTool;
+use crate::panels::camera::{self, CameraCommand};
 use crate::panels::{ALL_TABS, Action, Tab, Viewer};
 
 /// Persisted between runs.
@@ -49,6 +50,10 @@ pub(crate) struct ViewState {
     /// The tile the pointer was last over in the level view: where Paste puts
     /// the clipboard's top-left item.
     pub(crate) last_hovered: Option<TilePos>,
+    /// A camera move for the level view to make next frame.
+    pub(crate) camera_request: Option<CameraCommand>,
+    /// The level the camera was last fitted to; a different level re-fits.
+    pub(crate) camera_level: Option<LevelId>,
 }
 
 impl Default for ViewState {
@@ -62,6 +67,8 @@ impl Default for ViewState {
             show_entrances: true,
             drag_group: 0,
             last_hovered: None,
+            camera_request: None,
+            camera_level: None,
         }
     }
 }
@@ -131,6 +138,8 @@ impl App {
             settings.last_level = level;
         }
         let path = launch.rom.or_else(|| settings.last_rom.clone());
+        // Cmd +/−/0 drive the level camera, not the UI scale.
+        cc.egui_ctx.options_mut(|o| o.zoom_with_keyboard = false);
         let mut app = Self {
             settings,
             view: ViewState::default(),
@@ -357,6 +366,9 @@ impl App {
         });
         let save = ctx.input_mut(|i| i.consume_shortcut(&SAVE));
         let play = ctx.input_mut(|i| i.consume_shortcut(&PLAY));
+        if let Some(command) = ctx.input_mut(camera::consume_shortcut) {
+            self.view.camera_request = Some(command);
+        }
         for action in pressed {
             self.edit_menu_action(action);
         }
@@ -467,6 +479,17 @@ impl App {
             ui.checkbox(&mut self.view.show_tile_grid, "Tile grid");
             ui.checkbox(&mut self.view.show_exits, "Screen exits");
             ui.checkbox(&mut self.view.show_entrances, "Entrances");
+            ui.separator();
+            ui.menu_button("Navigate", |ui| {
+                for (shortcut, command) in &camera::SHORTCUTS {
+                    let button = egui::Button::new(command.label())
+                        .shortcut_text(ui.ctx().format_shortcut(shortcut));
+                    if ui.add(button).clicked() {
+                        ui.close();
+                        self.view.camera_request = Some(*command);
+                    }
+                }
+            });
         });
     }
 
