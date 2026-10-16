@@ -39,7 +39,7 @@ cargo solar emu-boot "roms/Super Mario World (USA).sfc" --frames 600 --out title
 cargo solar emu-bench "roms/Super Mario World (USA).sfc" [--frames 600] [--warmup 120]   # emulator speed vs real time
 cargo solar play "roms/Super Mario World (USA).sfc" 105 --frames 120 --out play.png [--audio play.wav] [--midway] [--exit ID] [--powerup 0-3]
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105 [--play]   # GUI editor; --play starts the level in the emulator (dev profile already optimizes the emulator crates)
-cargo run -p solar-magic --features gamepad -- <rom> 105 --play   # gamepad input in the Play panel (gilrs; libudev-dev on Linux)
+cargo run -p solar-magic --no-default-features -- <rom> 105   # GUI without gamepad input (gilrs, on by default, needs libudev-dev on Linux); see docs/emulation/input.md
 ```
 
 To check the GUI visually: launch it in the background, then `screencapture -x shot.png`

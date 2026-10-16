@@ -1,9 +1,10 @@
 //! The zoomable level picture with selection, dragging and placement.
 
-use egui::{DragPanButtons, PointerButton, Sense};
+use egui::{CursorIcon, DragPanButtons, Key, PointerButton, Sense};
 use smw_data::level::{ObjectKind, ObjectSpec, SpriteSpec, TilePos};
 use smw_render::scene::LevelScene;
 
+use super::camera::{self, CameraCommand, LevelExtent};
 use super::{Action, Viewer, tile_under, to_f32};
 use crate::edit::{Drag, EditCommand, EditSession, Hit, Tool, band_select, hit_test, rect_between};
 use crate::picker::PickItem;
@@ -41,54 +42,53 @@ impl Viewer<'_> {
         let mut hovered: Option<TilePos> = None;
         let mut actions: Vec<Action> = Vec::new();
         status_bar(ui, &doc.status);
-        egui::Scene::new()
-            .zoom_range(0.25..=8.0)
-            .drag_pan_buttons(DragPanButtons::MIDDLE | DragPanButtons::SECONDARY)
-            .show(ui, &mut scene_rect, |ui| {
-                let response = ui.add(
-                    egui::Image::new(texture)
-                        .fit_to_exact_size(size)
-                        .sense(Sense::click_and_drag()),
-                );
-                let origin = response.rect.min;
-                let zoom = ui
-                    .ctx()
-                    .layer_transform_to_global(ui.layer_id())
-                    .map_or(1.0, |t| t.scaling)
-                    .max(0.01);
-                let frame = super::overlays::Frame {
-                    scene,
-                    session,
-                    view,
-                    rom: &doc.rom,
-                    layout: &doc.layout,
-                    origin,
-                    zoom,
-                };
-                super::overlays::draw(ui.painter(), &frame);
-                let to_tile = |pos: egui::Pos2| {
-                    tile_under(pos - origin).map(|(x, y)| {
-                        TilePos::new(
-                            u16::try_from(x).unwrap_or(u16::MAX),
-                            u16::try_from(y).unwrap_or(u16::MAX),
-                        )
-                    })
-                };
-                hovered = response.hover_pos().and_then(to_tile);
-                let clicked_tile = response.interact_pointer_pos().and_then(to_tile);
-                play_from_menu(ui, &response, clicked_tile, &mut actions);
-                let pointer = Pointer {
-                    hovered: response.interact_pointer_pos().and_then(to_tile).or(hovered),
-                    drag_started: response.drag_started_by(PointerButton::Primary),
-                    dragged: response.dragged_by(PointerButton::Primary),
-                    drag_stopped: response.drag_stopped_by(PointerButton::Primary),
-                    clicked: response.clicked_by(PointerButton::Primary),
-                    shift: ui.input(|i| i.modifiers.shift),
-                };
-                handle_pointer(scene, session, view, &pointer, &mut actions);
-                let mut place = Place { session, view, actions: &mut actions };
-                drop_and_ghost(ui, &response, origin, &mut place);
-            });
+        let target = CameraTarget { level: doc.level, scene, session, size };
+        update_camera(ui, view, &target, &mut scene_rect);
+        let space_pan = space_held(ui);
+        nav_scene(space_pan).show(ui, &mut scene_rect, |ui| {
+            let sense = if space_pan { Sense::hover() } else { Sense::click_and_drag() };
+            let response = ui.add(egui::Image::new(texture).fit_to_exact_size(size).sense(sense));
+            let origin = response.rect.min;
+            ui.data_mut(|d| d.insert_temp(egui::Id::new(ORIGIN_ID), origin));
+            nav_feedback(ui, &response, space_pan, view);
+            let zoom = ui
+                .ctx()
+                .layer_transform_to_global(ui.layer_id())
+                .map_or(1.0, |t| t.scaling)
+                .max(0.01);
+            let frame = super::overlays::Frame {
+                scene,
+                session,
+                view,
+                rom: &doc.rom,
+                layout: &doc.layout,
+                origin,
+                zoom,
+            };
+            super::overlays::draw(ui.painter(), &frame);
+            let to_tile = |pos: egui::Pos2| {
+                tile_under(pos - origin).map(|(x, y)| {
+                    TilePos::new(
+                        u16::try_from(x).unwrap_or(u16::MAX),
+                        u16::try_from(y).unwrap_or(u16::MAX),
+                    )
+                })
+            };
+            hovered = response.hover_pos().and_then(to_tile);
+            let clicked_tile = response.interact_pointer_pos().and_then(to_tile);
+            play_from_menu(ui, &response, clicked_tile, &mut actions);
+            let pointer = Pointer {
+                hovered: response.interact_pointer_pos().and_then(to_tile).or(hovered),
+                drag_started: response.drag_started_by(PointerButton::Primary),
+                dragged: response.dragged_by(PointerButton::Primary),
+                drag_stopped: response.drag_stopped_by(PointerButton::Primary),
+                clicked: response.clicked_by(PointerButton::Primary),
+                shift: ui.input(|i| i.modifiers.shift),
+            };
+            handle_pointer(scene, session, view, &pointer, &mut actions);
+            let mut place = Place { session, view, actions: &mut actions };
+            drop_and_ghost(ui, &response, origin, &mut place);
+        });
         ui.data_mut(|d| d.insert_persisted(rect_id, scene_rect));
         if hovered.is_some() {
             view.last_hovered = hovered;
@@ -196,6 +196,142 @@ const fn insert_command(session: &EditSession, tool: Tool, tile: TilePos) -> Opt
     }
 }
 
+/// Memory key of the picture's top-left in scene coordinates.
+const ORIGIN_ID: &str = "scene_origin";
+/// Memory key of the level view's size last frame, for the zoom readout.
+const VIEWPORT_ID: &str = "scene_viewport";
+
+/// What the camera frames.
+struct CameraTarget<'a> {
+    level: smw_data::LevelId,
+    scene: &'a LevelScene,
+    session: &'a EditSession,
+    size: egui::Vec2,
+}
+
+/// Draws the navigation toolbar, re-fits on a new level and applies any
+/// pending camera command to `scene_rect`.
+fn update_camera(
+    ui: &mut egui::Ui,
+    view: &mut crate::app::ViewState,
+    target: &CameraTarget<'_>,
+    scene_rect: &mut egui::Rect,
+) {
+    let origin = ui.data(|d| d.get_temp(egui::Id::new(ORIGIN_ID))).unwrap_or(egui::Pos2::ZERO);
+    let screens = target.scene.loaded.level.header.screens();
+    let extent = LevelExtent::new(origin, target.size, target.scene.loaded.vertical, screens);
+    toolbar(ui, view, &extent, *scene_rect);
+    let viewport = ui.available_size_before_wrap();
+    ui.data_mut(|d| d.insert_temp(egui::Id::new(VIEWPORT_ID), viewport));
+    if view.camera_level != Some(target.level) || *scene_rect == egui::Rect::ZERO {
+        view.camera_level = Some(target.level);
+        view.camera_request = Some(CameraCommand::FitLevel);
+    }
+    if let Some(command) = view.camera_request.take() {
+        let selection = super::overlays::selection_bounds(target.scene, target.session, origin);
+        *scene_rect = camera::apply(command, *scene_rect, viewport, &extent, selection);
+        ui.ctx().request_repaint();
+    }
+}
+
+/// The pan-and-zoom container; Space lets the left button pan too.
+fn nav_scene(space_pan: bool) -> egui::Scene {
+    let pan_buttons = if space_pan {
+        DragPanButtons::all()
+    } else {
+        DragPanButtons::MIDDLE | DragPanButtons::SECONDARY
+    };
+    egui::Scene::new().zoom_range(camera::ZOOM_MIN..=camera::ZOOM_MAX).drag_pan_buttons(pan_buttons)
+}
+
+/// Grab cursor while Space-panning; middle double-click recenters.
+fn nav_feedback(
+    ui: &egui::Ui,
+    response: &egui::Response,
+    space_pan: bool,
+    view: &mut crate::app::ViewState,
+) {
+    if space_pan && response.hovered() {
+        let grabbing = ui.input(|i| i.pointer.primary_down());
+        ui.ctx().set_cursor_icon(if grabbing { CursorIcon::Grabbing } else { CursorIcon::Grab });
+    }
+    if response.double_clicked_by(PointerButton::Middle) {
+        view.camera_request = Some(CameraCommand::Recenter);
+    }
+}
+
+/// Space held over the editor (not while typing): drag pans with any button.
+fn space_held(ui: &egui::Ui) -> bool {
+    !ui.ctx().egui_wants_keyboard_input() && ui.input(|i| i.key_down(Key::Space))
+}
+
+/// A toolbar button that queues `command`, with its shortcut in the tooltip.
+fn camera_button(
+    ui: &mut egui::Ui,
+    view: &mut crate::app::ViewState,
+    text: &str,
+    selected: bool,
+    command: CameraCommand,
+) {
+    let tip = camera::shortcut_for(command).map_or_else(
+        || command.label(),
+        |s| format!("{}  ({})", command.label(), ui.ctx().format_shortcut(s)),
+    );
+    if ui.selectable_label(selected, text).on_hover_text(tip).clicked() {
+        view.camera_request = Some(command);
+    }
+}
+
+/// Fit, zoom presets, zoom readout, recenter and screen navigation.
+fn toolbar(
+    ui: &mut egui::Ui,
+    view: &mut crate::app::ViewState,
+    extent: &LevelExtent,
+    scene_rect: egui::Rect,
+) {
+    let viewport = ui.data(|d| d.get_temp(egui::Id::new(VIEWPORT_ID))).unwrap_or(egui::Vec2::ZERO);
+    let zoom = camera::zoom_of(scene_rect, viewport);
+    egui::Panel::top("level_nav").show(ui, |ui| {
+        ui.horizontal_wrapped(|ui| {
+            camera_button(ui, view, "Fit", false, CameraCommand::FitLevel);
+            camera_button(ui, view, "Fit height", false, CameraCommand::FitHeight);
+            camera_button(ui, view, "Selection", false, CameraCommand::FitSelection);
+            ui.separator();
+            camera_button(ui, view, "−", false, CameraCommand::ZoomStep(-1));
+            for z in 1..=4u8 {
+                let on = (zoom - f32::from(z)).abs() < 0.01;
+                camera_button(ui, view, &format!("{z}×"), on, CameraCommand::Zoom(z));
+            }
+            camera_button(ui, view, "+", false, CameraCommand::ZoomStep(1));
+            ui.label(format!("{:.0}%", zoom * 100.0));
+            ui.separator();
+            camera_button(ui, view, "Recenter", false, CameraCommand::Recenter);
+            ui.separator();
+            screen_controls(ui, view, extent, scene_rect);
+        });
+    });
+}
+
+/// Start, previous, screen number, next, end.
+fn screen_controls(
+    ui: &mut egui::Ui,
+    view: &mut crate::app::ViewState,
+    extent: &LevelExtent,
+    scene_rect: egui::Rect,
+) {
+    camera_button(ui, view, "⏮", false, CameraCommand::Start);
+    camera_button(ui, view, "◀", false, CameraCommand::ScreenStep(-1));
+    ui.label("Screen");
+    let mut screen = camera::screen_at(scene_rect, extent);
+    let last = extent.screens.saturating_sub(1);
+    if super::hex_byte(ui, &mut screen, last) {
+        view.camera_request = Some(CameraCommand::GoToScreen(screen));
+    }
+    ui.label(format!("/ {last:X}"));
+    camera_button(ui, view, "▶", false, CameraCommand::ScreenStep(1));
+    camera_button(ui, view, "⏭", false, CameraCommand::End);
+}
+
 /// Right-click menu offering to play the level from the clicked tile.
 fn play_from_menu(
     ui: &egui::Ui,
@@ -227,7 +363,9 @@ fn status_bar(ui: &mut egui::Ui, message: &str) {
             ui.data(|d| d.get_temp::<String>(egui::Id::new("status_text"))).unwrap_or_default();
         ui.horizontal(|ui| {
             ui.label(if status.is_empty() {
-                "left: select/drag, middle or right: pan, scroll: zoom".to_owned()
+                "left: select/drag · middle, right or space+drag: pan · wheel: scroll · \
+                 ⌘/Ctrl+wheel or pinch: zoom · View > Navigate for shortcuts"
+                    .to_owned()
             } else {
                 status
             });

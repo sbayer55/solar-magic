@@ -5,6 +5,11 @@ mod audio;
 mod debug;
 mod gamepad;
 mod input;
+#[cfg_attr(
+    not(feature = "gamepad"),
+    allow(dead_code, reason = "classification and stick logic are only used by gilrs")
+)]
+mod pad_kind;
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
@@ -19,8 +24,9 @@ use snes_core::{Console, Hit, Input, Region, RunReport};
 use snes_rom::Rom;
 
 pub(crate) use debug::{DebugConfig, DebugSnapshot, TraceRing, parse_address};
-pub(crate) use gamepad::Gamepads;
+pub(crate) use gamepad::{Gamepads, PadInfo};
 pub(crate) use input::{KeyMap, read_input};
+pub(crate) use pad_kind::PadKind;
 
 /// Master cycles per NTSC frame (262 lines of 1364, minus the short line).
 const FRAME_NANOS: u64 = 16_639_267;
@@ -110,7 +116,7 @@ pub(crate) struct PlaySession {
     pub(crate) input: Input,
     /// Key bindings.
     pub(crate) keys: KeyMap,
-    /// Gamepads (feature `gamepad`).
+    /// Gamepads (feature `gamepad`, on by default).
     pub(crate) gamepads: Option<Gamepads>,
     /// What the Debug panel asks the thread to capture.
     pub(crate) debug: DebugConfig,

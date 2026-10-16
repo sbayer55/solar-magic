@@ -34,7 +34,7 @@ goal; see the roadmap in `docs/ARCHITECTURE.md`.
 | LM9 `.mwl` level files: `solar mwl-export` / `mwl-import` / `mwl-info` / `export-all` / `import-all`; exports equal Lunar Magic 3.71's byte for byte | done |
 | Lunar Magic ROM compatibility, rendering fidelity (sprites, priority, layer 3), overworld | planned, see `docs/ARCHITECTURE.md` |
 | Tools: IPS patcher (`solar ips-apply` / `ips-create` / `ips-info`, GUI Tools → IPS Patcher) | done: Lunar IPS parity (RLE, expand/truncate, apply log, copier-header add/strip) |
-| In-house SNES emulator (`snes-core`, `snes-ppu`, `spc700`, `snes-apu`, `snes-sa1`, `smw-play`; `solar emu-boot`, `solar play 105 --out frame.png`) | E0–E9 done: cycle-exact 65c816 and SPC700, machine core, S-SMP with boot-ROM handshake and S-DSP sound, PPU renderer (modes 0-7, hi-res, interlace, offset-per-tile, sprites, windows, colour math; 56 of krom's 73 test ROMs match their screenshots), SA-1 coprocessor (unit-tested; no SA-1 ROM locally), launch straight into any level with unsaved edits (main/midway/secondary-exit entrances, play from any tile). Tools → Play Level (Ctrl+T) runs the edited level in the editor with keyboard or gamepad (`--features gamepad`) input and sound, save states, rewind and `.srm` saves; the Debug panel has registers, disassembly, breakpoints, watches, memory and a trace. Next: verify SA-1/ExLoROM against a real Lunar Magic ROM (`docs/emulation/`) |
+| In-house SNES emulator (`snes-core`, `snes-ppu`, `spc700`, `snes-apu`, `snes-sa1`, `smw-play`; `solar emu-boot`, `solar play 105 --out frame.png`) | E0–E9 done: cycle-exact 65c816 and SPC700, machine core, S-SMP with boot-ROM handshake and S-DSP sound, PPU renderer (modes 0-7, hi-res, interlace, offset-per-tile, sprites, windows, colour math; 56 of krom's 73 test ROMs match their screenshots), SA-1 coprocessor (unit-tested; no SA-1 ROM locally), launch straight into any level with unsaved edits (main/midway/secondary-exit entrances, play from any tile). Tools → Play Level (Ctrl+T) runs the edited level in the editor with keyboard or gamepad input (Xbox, DualSense, Steam Controller / Deck via Steam Input; `docs/emulation/input.md`) and sound, save states, rewind and `.srm` saves; the Debug panel has registers, disassembly, breakpoints, watches, memory and a trace. Next: verify SA-1/ExLoROM against a real Lunar Magic ROM (`docs/emulation/`) |
 
 ## Try it
 
@@ -58,6 +58,11 @@ cargo solar ips-apply hack.ips "roms/Super Mario World (USA).sfc" out/hack.smc -
 cargo solar ips-create original.sfc modified.sfc out/changes.ips
 cargo run -p solar-magic -- "roms/Super Mario World (USA).sfc" 105 --play   # the editor, playing the level
 ```
+
+With [`just`](https://github.com/casey/just) installed, `just` lists the common
+tasks (`just check` runs what CI runs, `just run 105` opens the editor), and on
+macOS `just dmg` (or `just dmg universal`) builds a drag-to-Applications installer
+in `target/dist/`.
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the design and
 [`docs/formats/`](docs/formats/) for the file formats.

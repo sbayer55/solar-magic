@@ -1,5 +1,6 @@
 //! The dockable panels.
 
+pub(crate) mod camera;
 mod debug;
 mod exits;
 mod header;
